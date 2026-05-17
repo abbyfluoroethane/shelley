@@ -671,6 +671,9 @@ func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error
 		}
 		random := time.Duration(rand.Int63n(int64(time.Second)))
 		sleep := backoff[attempts] + random
+		if retryAfter := llm.ParseRetryAfter(apiErr.Header.Get("Retry-After")); retryAfter > sleep {
+			sleep = retryAfter
+		}
 		slog.WarnContext(ctx, "gemini_request_retry", "error", gemApiErr.Error(), "status_code", apiErr.StatusCode, "attempt", attempts+1, "sleep", sleep)
 		select {
 		case <-time.After(sleep):

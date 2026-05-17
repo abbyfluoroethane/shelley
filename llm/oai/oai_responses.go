@@ -493,7 +493,8 @@ func (s *ResponsesService) Do(ctx context.Context, ir *llm.Request) (*llm.Respon
 	backoff := []time.Duration{1 * time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 15 * time.Second}
 
 	// retry loop
-	var errs error // accumulated errors across all attempts
+	var errs error            // accumulated errors across all attempts
+	var retryAfter time.Duration // hint from upstream Retry-After header, reset each attempt
 	for attempts := 0; ; attempts++ {
 		if attempts > 10 {
 			return nil, fmt.Errorf("responses request failed after %d attempts (url=%s, model=%s): %w", attempts, fullURL, model.ModelName, errs)
@@ -503,6 +504,10 @@ func (s *ResponsesService) Do(ctx context.Context, ir *llm.Request) (*llm.Respon
 				return nil, fmt.Errorf("responses request failed after %d attempts (context cancelled): %w", attempts, errs)
 			}
 			sleep := backoff[min(attempts, len(backoff)-1)] + time.Duration(rand.Int64N(int64(time.Second)))
+			if retryAfter > sleep {
+				sleep = retryAfter
+			}
+			retryAfter = 0
 			slog.WarnContext(ctx, "responses request sleep before retry", "sleep", sleep, "attempts", attempts)
 			select {
 			case <-time.After(sleep):
@@ -554,13 +559,15 @@ func (s *ResponsesService) Do(ctx context.Context, ir *llm.Request) (*llm.Respon
 				switch {
 				case httpResp.StatusCode >= 500:
 					// Server error, retry
-					slog.WarnContext(ctx, "responses_request_failed", "error", apiErr.Message, "status_code", httpResp.StatusCode, "url", fullURL, "model", model.ModelName)
+					retryAfter = llm.ParseRetryAfter(httpResp.Header.Get("Retry-After"))
+					slog.WarnContext(ctx, "responses_request_failed", "error", apiErr.Message, "status_code", httpResp.StatusCode, "url", fullURL, "model", model.ModelName, "retry_after", retryAfter)
 					errs = errors.Join(errs, fmt.Errorf("attempt %d at %s: status %d (url=%s, model=%s): %s", attempts+1, now, httpResp.StatusCode, fullURL, model.ModelName, apiErr.Message))
 					continue
 
 				case httpResp.StatusCode == 429:
 					// Rate limited, retry
-					slog.WarnContext(ctx, "responses_request_rate_limited", "error", apiErr.Message, "url", fullURL, "model", model.ModelName)
+					retryAfter = llm.ParseRetryAfter(httpResp.Header.Get("Retry-After"))
+					slog.WarnContext(ctx, "responses_request_rate_limited", "error", apiErr.Message, "url", fullURL, "model", model.ModelName, "retry_after", retryAfter)
 					errs = errors.Join(errs, fmt.Errorf("attempt %d at %s: status %d (rate limited, url=%s, model=%s): %s", attempts+1, now, httpResp.StatusCode, fullURL, model.ModelName, apiErr.Message))
 					continue
 
