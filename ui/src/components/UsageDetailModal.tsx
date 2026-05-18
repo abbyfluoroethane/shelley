@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { Usage } from "../types";
 import { useEscapeClose } from "./useEscapeClose";
 
@@ -31,7 +32,7 @@ function UsageDetailModal({ usage, durationMs, onClose }: UsageDetailModalProps)
 
   useEscapeClose(true, onClose);
 
-  return (
+  return createPortal(
     <div className="usage-detail-overlay" onClick={onClose}>
       <div className="usage-detail-modal" onClick={(e) => e.stopPropagation()}>
         <div className="usage-detail-header">
@@ -87,7 +88,8 @@ function UsageDetailModal({ usage, durationMs, onClose }: UsageDetailModalProps)
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
