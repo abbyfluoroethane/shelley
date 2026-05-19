@@ -160,7 +160,10 @@ function DiffViewer({
   // save+quit the same as plain quit. We pass `onClose` directly (not an
   // inline arrow) so the effect deps stay stable across renders and the
   // vim adapter isn't torn down on every parent re-render.
-  useMonacoVim(modifiedEditor, vimStatusNode, !isMobile && vimEnabled, onClose);
+  // Vim mode only applies in edit mode; in comment mode the editor is read-only
+  // and key presses would otherwise be handled by both the comment-mode UI and
+  // the vim adapter, causing strange double-handling.
+  useMonacoVim(modifiedEditor, vimStatusNode, !isMobile && vimEnabled && mode === "edit", onClose);
   // Mirror of isMobile for handlers attached once at editor-creation time
   // (those handlers must honor the *current* viewport, not the viewport at
   // creation time, because we intentionally don't recreate the editor on
