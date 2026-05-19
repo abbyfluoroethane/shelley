@@ -27,6 +27,10 @@ func (m *mockService) MaxImageDimension() int {
 	return 0
 }
 
+func (m *mockService) MaxImageBytes() int {
+	return 0
+}
+
 func (m *mockLLMProvider) GetService(modelID string) (llm.Service, error) {
 	return &mockService{}, nil
 }

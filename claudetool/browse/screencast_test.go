@@ -19,7 +19,7 @@ func TestScreencastStartStop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -124,7 +124,7 @@ func TestScreencastLimitsAreReasonable(t *testing.T) {
 
 func TestScreencastStatusWhenInactive(t *testing.T) {
 	ctx := context.Background()
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -138,7 +138,7 @@ func TestScreencastStatusWhenInactive(t *testing.T) {
 }
 
 func TestScreencastSchemaIncludes(t *testing.T) {
-	tools := NewBrowseTools(context.Background(), 0, 0)
+	tools := NewBrowseTools(context.Background(), 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})

@@ -105,6 +105,13 @@ func (s *Service) MaxImageDimension() int {
 	return 2000
 }
 
+// MaxImageBytes returns the maximum allowed encoded size in bytes for a single image.
+// Anthropic enforces a 5 MB per-image limit on the API.
+// See https://platform.claude.com/docs/en/build-with-claude/vision.
+func (s *Service) MaxImageBytes() int {
+	return 5 * 1024 * 1024
+}
+
 // Service provides Claude completions.
 // Fields should not be altered concurrently with calling any method on Service.
 type Service struct {

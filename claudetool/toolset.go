@@ -214,13 +214,7 @@ func NewOrchestratorToolSet(ctx context.Context, cfg OrchestratorToolSetConfig) 
 	// Browser tools for read_image (screenshot viewing)
 	var cleanup func()
 	if cfg.EnableBrowser && IsToolEnabled("read_image", cfg.ToolOverrides, cfg.DisableAllTools) {
-		maxImageDimension := 0
-		if cfg.LLMProvider != nil && cfg.ModelID != "" {
-			if svc, err := cfg.LLMProvider.GetService(cfg.ModelID); err == nil {
-				maxImageDimension = svc.MaxImageDimension()
-			}
-		}
-		browserTools, browserCleanup := browse.RegisterBrowserTools(ctx, maxImageDimension)
+		browserTools, browserCleanup := browse.RegisterBrowserTools(ctx)
 		// Only include read_image from browser tools, not the full browser
 		for _, bt := range browserTools {
 			if bt.Name == "read_image" {
@@ -344,14 +338,7 @@ func NewToolSet(ctx context.Context, cfg ToolSetConfig) *ToolSet {
 		}
 	}
 	if cfg.EnableBrowser && anyBrowserToolEnabled {
-		// Get max image dimension from the LLM service
-		maxImageDimension := 0
-		if cfg.LLMProvider != nil && cfg.ModelID != "" {
-			if svc, err := cfg.LLMProvider.GetService(cfg.ModelID); err == nil {
-				maxImageDimension = svc.MaxImageDimension()
-			}
-		}
-		browserTools, browserCleanup := browse.RegisterBrowserTools(ctx, maxImageDimension)
+		browserTools, browserCleanup := browse.RegisterBrowserTools(ctx)
 		if len(browserTools) > 0 {
 			tools = append(tools, browserTools...)
 		}

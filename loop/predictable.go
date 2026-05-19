@@ -59,6 +59,11 @@ func (s *PredictableService) MaxImageDimension() int {
 	return 2000
 }
 
+// MaxImageBytes returns the maximum allowed encoded image size in bytes.
+func (s *PredictableService) MaxImageBytes() int {
+	return 5 * 1024 * 1024
+}
+
 // Do processes a request and returns a predictable response based on the input text
 func (s *PredictableService) Do(ctx context.Context, req *llm.Request) (*llm.Response, error) {
 	// Store request for testing inspection

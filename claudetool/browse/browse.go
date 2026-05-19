@@ -76,8 +76,6 @@ type BrowseTools struct {
 	// Idle timeout management
 	idleTimeout time.Duration
 	idleTimer   *time.Timer
-	// Max image dimension for resizing (0 means use default)
-	maxImageDimension int
 	// Download tracking
 	downloads      map[string]*DownloadInfo // keyed by GUID
 	downloadsMutex sync.Mutex
@@ -102,8 +100,7 @@ type BrowseTools struct {
 
 // NewBrowseTools creates a new set of browser automation tools.
 // idleTimeout is how long to wait before shutting down an idle browser (0 uses default).
-// maxImageDimension is the max pixel dimension for images (0 means unlimited).
-func NewBrowseTools(ctx context.Context, idleTimeout time.Duration, maxImageDimension int) *BrowseTools {
+func NewBrowseTools(ctx context.Context, idleTimeout time.Duration) *BrowseTools {
 	if idleTimeout <= 0 {
 		idleTimeout = DefaultIdleTimeout
 	}
@@ -114,13 +111,12 @@ func NewBrowseTools(ctx context.Context, idleTimeout time.Duration, maxImageDime
 	}
 
 	bt := &BrowseTools{
-		ctx:               ctx,
-		screenshots:       make(map[string]time.Time),
-		consoleLogs:       make([]*runtime.EventConsoleAPICalled, 0),
-		maxConsoleLogs:    100,
-		maxImageDimension: maxImageDimension,
-		idleTimeout:       idleTimeout,
-		downloads:         make(map[string]*DownloadInfo),
+		ctx:            ctx,
+		screenshots:    make(map[string]time.Time),
+		consoleLogs:    make([]*runtime.EventConsoleAPICalled, 0),
+		maxConsoleLogs: 100,
+		idleTimeout:    idleTimeout,
+		downloads:      make(map[string]*DownloadInfo),
 	}
 	bt.downloadCond = sync.NewCond(&bt.downloadsMutex)
 	return bt
@@ -585,16 +581,14 @@ func (b *BrowseTools) screenshotRun(ctx context.Context, input screenshotInput) 
 	// Get the full path to the screenshot
 	screenshotPath := GetScreenshotPath(id)
 
-	// Resize image if needed to fit within model's image dimension limits
-	imageData := buf
-	format := "png"
-	resized := false
-	if b.maxImageDimension > 0 {
-		var err error
-		imageData, format, resized, err = imageutil.ResizeImage(buf, b.maxImageDimension)
-		if err != nil {
-			return llm.ErrorToolOut(fmt.Errorf("failed to resize screenshot: %w", err))
-		}
+	// Fit the screenshot inside the model's per-image limits. The full-size
+	// PNG stays on disk at screenshotPath; only the LLM-facing copy is
+	// (potentially) downscaled. A byte-overflow that can't be fixed by
+	// downscaling produces an error so we never send a request the API will
+	// reject.
+	imageData, format, resized, err := prepareImageForModel(ctx, buf, "png", screenshotPath)
+	if err != nil {
+		return llm.ErrorToolOut(err)
 	}
 
 	base64Data := base64.StdEncoding.EncodeToString(imageData)
@@ -610,7 +604,7 @@ func (b *BrowseTools) screenshotRun(ctx context.Context, input screenshotInput) 
 
 	description := fmt.Sprintf("Screenshot taken (saved as %s)", screenshotPath)
 	if resized {
-		description += " [resized]"
+		description += " [resized to fit model limits]"
 	}
 
 	return llm.ToolOut{LLMContent: []llm.Content{
@@ -906,15 +900,14 @@ func (b *BrowseTools) readImageRun(ctx context.Context, input readImageInput) ll
 		return llm.ErrorfToolOut("file is not an image: %s", detectedType)
 	}
 
-	// Resize image if needed to fit within model's image dimension limits
-	resized := false
+	// Fit the image inside the model's per-image limits. Dimension overflow
+	// is fixed transparently by downscaling; byte overflow that can't be
+	// fixed by downscaling becomes a tool error so we never send a request
+	// the API will reject.
 	format := strings.TrimPrefix(detectedType, "image/")
-	if b.maxImageDimension > 0 {
-		var err error
-		imageData, format, resized, err = imageutil.ResizeImage(imageData, b.maxImageDimension)
-		if err != nil {
-			return llm.ErrorToolOut(fmt.Errorf("failed to resize image: %w", err))
-		}
+	imageData, format, resized, err := prepareImageForModel(ctx, imageData, format, input.Path)
+	if err != nil {
+		return llm.ErrorToolOut(err)
 	}
 
 	base64Data := base64.StdEncoding.EncodeToString(imageData)
@@ -925,7 +918,7 @@ func (b *BrowseTools) readImageRun(ctx context.Context, input readImageInput) ll
 		description += " [converted from HEIC]"
 	}
 	if resized {
-		description += " [resized]"
+		description += " [resized to fit model limits]"
 	}
 
 	return llm.ToolOut{LLMContent: []llm.Content{
@@ -939,6 +932,45 @@ func (b *BrowseTools) readImageRun(ctx context.Context, input readImageInput) ll
 			Data:      base64Data,
 		},
 	}}
+}
+
+// prepareImageForModel fits imageData inside the limits advertised by the
+// llm.Service in ctx. Dimension overflow is fixed transparently by
+// downscaling so the user (and the model) don't have to care, since the
+// caller never asked for a specific size. Byte overflow that we can't fix
+// by downscaling produces an error so the agent can recompress or pick a
+// smaller source rather than having the API reject the whole request.
+//
+// Returns the (possibly resized) bytes, the resulting format, whether a
+// resize happened, and any error. source is included in error messages so
+// the agent knows what to fix. If no service is attached to ctx (e.g.
+// tests, ad-hoc callers) the data is returned unchanged.
+func prepareImageForModel(ctx context.Context, imageData []byte, detectedFormat, source string) (out []byte, format string, resized bool, err error) {
+	svc := llm.ServiceFromContext(ctx)
+	if svc == nil {
+		return imageData, detectedFormat, false, nil
+	}
+
+	if maxDim := svc.MaxImageDimension(); maxDim > 0 {
+		// imageutil.ResizeImage no-ops when the image already fits and
+		// returns the original bytes (and format) unchanged. DecodeConfig
+		// failure (e.g. webp without a Go decoder) is treated as "can't
+		// resize"; we fall through to the byte-size check.
+		resizedData, resizedFormat, didResize, rerr := imageutil.ResizeImage(imageData, maxDim)
+		if rerr == nil {
+			imageData = resizedData
+			detectedFormat = resizedFormat
+			resized = didResize
+		}
+	}
+
+	if maxBytes := svc.MaxImageBytes(); maxBytes > 0 && len(imageData) > maxBytes {
+		return nil, "", false, fmt.Errorf(
+			"image too large for model: %s is %d bytes (after any auto-resize), model limit is %d bytes; recompress the image (e.g. lower JPEG quality) and try again",
+			source, len(imageData), maxBytes,
+		)
+	}
+	return imageData, detectedFormat, resized, nil
 }
 
 // parseTimeout parses a timeout string and returns a time.Duration

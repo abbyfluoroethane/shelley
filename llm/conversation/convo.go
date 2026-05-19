@@ -490,6 +490,7 @@ func (c *Convo) ToolResultContents(ctx context.Context, resp *llm.Response) ([]l
 			defer cancel()
 			// TODO: move this into newToolUseContext?
 			toolUseCtx = context.WithValue(toolUseCtx, toolCallInfoKey, ToolCallInfo{ToolUseID: part.ID})
+			toolUseCtx = llm.WithLLMService(toolUseCtx, c.Service)
 			toolOut := tool.Run(toolUseCtx, part.ToolInput)
 			if errors.Is(toolOut.Error, ErrDoNotRespond) {
 				return

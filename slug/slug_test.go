@@ -92,6 +92,10 @@ func (m *MockLLMService) MaxImageDimension() int {
 	return 0 // No limit for mock
 }
 
+func (m *MockLLMService) MaxImageBytes() int {
+	return 0
+}
+
 // MockLLMProvider provides a mock LLM provider for testing
 type MockLLMProvider struct {
 	Service *MockLLMService
@@ -257,6 +261,10 @@ func (m *MockLLMServiceWithError) MaxImageDimension() int {
 	return 0
 }
 
+func (m *MockLLMServiceWithError) MaxImageBytes() int {
+	return 0
+}
+
 // MockLLMProviderWithError provides a mock LLM provider that returns errors for all models
 type MockLLMProviderWithError struct{}
 
@@ -370,6 +378,10 @@ func (m *MockLLMServiceEmptyResponse) TokenContextWindow() int {
 }
 
 func (m *MockLLMServiceEmptyResponse) MaxImageDimension() int {
+	return 0
+}
+
+func (m *MockLLMServiceEmptyResponse) MaxImageBytes() int {
 	return 0
 }
 

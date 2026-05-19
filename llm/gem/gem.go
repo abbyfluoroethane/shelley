@@ -574,6 +574,16 @@ func (s *Service) MaxImageDimension() int {
 	return 0 // No known limit
 }
 
+// MaxImageBytes returns the maximum allowed encoded size for a single image.
+// The Gemini docs only document a 20 MB total inline request payload
+// (https://ai.google.dev/gemini-api/docs/image-understanding); since the
+// request can include multiple images plus prompts, we use 20 MB as a
+// per-image upper bound. Requests over the total still need to use the
+// Files API.
+func (s *Service) MaxImageBytes() int {
+	return 20 * 1024 * 1024
+}
+
 // Do sends a request to Gemini.
 func (s *Service) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error) {
 	// Log the incoming request for debugging

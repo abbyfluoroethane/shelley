@@ -9,9 +9,10 @@ import (
 // RegisterBrowserTools returns browser tools (combined browser tool + read_image) ready to be added to an agent.
 // It also returns a cleanup function that should be called when done to properly close the browser.
 // The browser will be initialized lazily when a browser tool is first used.
-// maxImageDimension is the max pixel dimension for images (0 uses default of 2000).
-func RegisterBrowserTools(ctx context.Context, maxImageDimension int) ([]*llm.Tool, func()) {
-	browserTools := NewBrowseTools(ctx, 0, maxImageDimension)
+// Per-image size limits are looked up from the llm.Service in the tool call
+// context at run time, not configured here.
+func RegisterBrowserTools(ctx context.Context) ([]*llm.Tool, func()) {
+	browserTools := NewBrowseTools(ctx, 0)
 
 	return browserTools.GetTools(), func() {
 		browserTools.Close()

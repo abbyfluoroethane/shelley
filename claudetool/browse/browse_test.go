@@ -21,10 +21,11 @@ import (
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/go-json-experiment/json/jsontext"
+	"shelley.exe.dev/llm"
 )
 
 func TestCombinedTool(t *testing.T) {
-	tools := NewBrowseTools(context.Background(), 0, 0)
+	tools := NewBrowseTools(context.Background(), 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -65,7 +66,7 @@ func TestCombinedTool(t *testing.T) {
 }
 
 func TestCombinedToolUnknownAction(t *testing.T) {
-	tools := NewBrowseTools(context.Background(), 0, 0)
+	tools := NewBrowseTools(context.Background(), 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -78,7 +79,7 @@ func TestCombinedToolUnknownAction(t *testing.T) {
 }
 
 func TestGetTools(t *testing.T) {
-	tools := NewBrowseTools(context.Background(), 0, 0)
+	tools := NewBrowseTools(context.Background(), 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -106,7 +107,7 @@ func TestBrowserInitialization(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -142,7 +143,7 @@ func TestNavigateTool(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -186,7 +187,7 @@ func TestNavigateTool(t *testing.T) {
 func TestScreenshotTool(t *testing.T) {
 	// Create browser tools instance
 	ctx := context.Background()
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -222,7 +223,7 @@ func TestScreenshotTool(t *testing.T) {
 
 func TestReadImageTool(t *testing.T) {
 	ctx := context.Background()
-	browseTools := NewBrowseTools(ctx, 0, 0)
+	browseTools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		browseTools.Close()
 	})
@@ -272,7 +273,7 @@ func TestDefaultViewportSize(t *testing.T) {
 		t.Skip("Skipping browser test in CI/headless environment")
 	}
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -324,7 +325,7 @@ func TestBrowserIdleShutdownAndRestart(t *testing.T) {
 	defer cancel()
 
 	idleTimeout := 100 * time.Millisecond
-	tools := NewBrowseTools(ctx, idleTimeout, 0)
+	tools := NewBrowseTools(ctx, idleTimeout)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -367,7 +368,7 @@ func TestBrowserCrashRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tools := NewBrowseTools(ctx, 30*time.Minute, 0)
+	tools := NewBrowseTools(ctx, 30*time.Minute)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -415,30 +416,36 @@ func TestBrowserCrashRecovery(t *testing.T) {
 	}
 }
 
-func TestReadImageToolResizesLargeImage(t *testing.T) {
-	ctx := context.Background()
-	browseTools := NewBrowseTools(ctx, 0, 200)
+// limitedService is a minimal llm.Service used by tests to drive the
+// image-limit checks via the tool call context.
+type limitedService struct {
+	maxDim   int
+	maxBytes int
+}
+
+func (s limitedService) Do(context.Context, *llm.Request) (*llm.Response, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+func (s limitedService) TokenContextWindow() int { return 0 }
+func (s limitedService) MaxImageDimension() int  { return s.maxDim }
+func (s limitedService) MaxImageBytes() int      { return s.maxBytes }
+
+func TestReadImageToolResizesOversizedImage(t *testing.T) {
+	browseTools := NewBrowseTools(context.Background(), 0)
 	t.Cleanup(func() {
 		browseTools.Close()
 	})
+	// Model limit: 200px on a side. Oversized images are silently downscaled.
+	ctx := llm.WithLLMService(context.Background(), limitedService{maxDim: 200})
 
 	testDir := t.TempDir()
 	testImagePath := filepath.Join(testDir, "large_image.png")
-
-	img := image.NewNRGBA(image.Rect(0, 0, 300, 250))
-	pix := img.Pix
-	for i := 0; i < len(pix); i += 4 {
-		pix[i] = 100
-		pix[i+1] = 150
-		pix[i+2] = 200
-		pix[i+3] = 255
-	}
 
 	f, err := os.Create(testImagePath)
 	if err != nil {
 		t.Fatalf("Failed to create test image file: %v", err)
 	}
-	if err := png.Encode(f, img); err != nil {
+	if err := png.Encode(f, image.NewNRGBA(image.Rect(0, 0, 300, 250))); err != nil {
 		f.Close()
 		t.Fatalf("Failed to encode test image: %v", err)
 	}
@@ -449,32 +456,84 @@ func TestReadImageToolResizesLargeImage(t *testing.T) {
 
 	toolOut := tool.Run(ctx, []byte(input))
 	if toolOut.Error != nil {
-		t.Fatalf("Read image tool failed: %v", toolOut.Error)
+		t.Fatalf("unexpected error: %v", toolOut.Error)
 	}
-	result := toolOut.LLMContent
-
-	if len(result) < 2 {
-		t.Fatalf("Expected at least 2 content objects, got %d", len(result))
+	if len(toolOut.LLMContent) < 2 {
+		t.Fatalf("expected at least 2 content blocks, got %d", len(toolOut.LLMContent))
 	}
-	if !strings.Contains(result[0].Text, "resized") {
-		t.Errorf("Expected description to mention resizing, got: %s", result[0].Text)
+	if !strings.Contains(toolOut.LLMContent[0].Text, "resized") {
+		t.Errorf("expected description to mention resizing, got: %s", toolOut.LLMContent[0].Text)
 	}
-
-	imageData, err := base64.StdEncoding.DecodeString(result[1].Data)
+	imageBytes, err := base64.StdEncoding.DecodeString(toolOut.LLMContent[1].Data)
 	if err != nil {
-		t.Fatalf("Failed to decode base64 image: %v", err)
+		t.Fatalf("decode base64: %v", err)
 	}
-
-	config, _, err := image.DecodeConfig(bytes.NewReader(imageData))
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(imageBytes))
 	if err != nil {
-		t.Fatalf("Failed to decode image config: %v", err)
+		t.Fatalf("decode config: %v", err)
 	}
-
-	if config.Width > 200 || config.Height > 200 {
-		t.Errorf("Image dimensions still exceed 200 pixels: %dx%d", config.Width, config.Height)
+	if cfg.Width > 200 || cfg.Height > 200 {
+		t.Errorf("resized image still exceeds limit: %dx%d", cfg.Width, cfg.Height)
 	}
+}
 
-	t.Logf("Large image resized from 300x250 to %dx%d", config.Width, config.Height)
+func TestReadImageToolRejectsOversizedBytes(t *testing.T) {
+	browseTools := NewBrowseTools(context.Background(), 0)
+	t.Cleanup(func() {
+		browseTools.Close()
+	})
+	// Pick a byte limit so small that any encoded PNG will exceed it.
+	ctx := llm.WithLLMService(context.Background(), limitedService{maxBytes: 16})
+
+	testDir := t.TempDir()
+	testImagePath := filepath.Join(testDir, "big_bytes.png")
+	f, err := os.Create(testImagePath)
+	if err != nil {
+		t.Fatalf("Failed to create test image file: %v", err)
+	}
+	if err := png.Encode(f, image.NewNRGBA(image.Rect(0, 0, 100, 100))); err != nil {
+		f.Close()
+		t.Fatalf("encode: %v", err)
+	}
+	f.Close()
+
+	tool := browseTools.ReadImageTool()
+	input := fmt.Sprintf(`{"path": "%s"}`, testImagePath)
+	toolOut := tool.Run(ctx, []byte(input))
+	if toolOut.Error == nil {
+		t.Fatalf("Expected error for image exceeding byte limit")
+	}
+	if !strings.Contains(toolOut.Error.Error(), "bytes") {
+		t.Errorf("Expected error to mention bytes, got: %v", toolOut.Error)
+	}
+}
+
+func TestReadImageToolNoServicePassesThrough(t *testing.T) {
+	// When no service is attached to the context (e.g. driven from tests or
+	// non-loop callers) the size checks should be skipped.
+	browseTools := NewBrowseTools(context.Background(), 0)
+	t.Cleanup(func() {
+		browseTools.Close()
+	})
+
+	testDir := t.TempDir()
+	testImagePath := filepath.Join(testDir, "plain.png")
+	f, err := os.Create(testImagePath)
+	if err != nil {
+		t.Fatalf("Failed to create test image file: %v", err)
+	}
+	if err := png.Encode(f, image.NewNRGBA(image.Rect(0, 0, 50, 50))); err != nil {
+		f.Close()
+		t.Fatalf("encode: %v", err)
+	}
+	f.Close()
+
+	tool := browseTools.ReadImageTool()
+	input := fmt.Sprintf(`{"path": "%s"}`, testImagePath)
+	toolOut := tool.Run(context.Background(), []byte(input))
+	if toolOut.Error != nil {
+		t.Fatalf("unexpected error without service in context: %v", toolOut.Error)
+	}
 }
 
 // TestIsPort80 tests the isPort80 function
@@ -507,7 +566,7 @@ func TestIsPort80(t *testing.T) {
 // TestResizeRunErrorPaths tests error paths in resize action
 func TestResizeRunErrorPaths(t *testing.T) {
 	ctx := context.Background()
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -536,7 +595,7 @@ func TestResizeRunErrorPaths(t *testing.T) {
 // TestScreenshotRunErrorPaths tests error paths in screenshot action
 func TestScreenshotRunErrorPaths(t *testing.T) {
 	ctx := context.Background()
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -552,7 +611,7 @@ func TestScreenshotRunErrorPaths(t *testing.T) {
 
 func TestRecentConsoleLogsRunErrorPaths(t *testing.T) {
 	ctx := context.Background()
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -594,7 +653,7 @@ func TestParseTimeout(t *testing.T) {
 func TestRegisterBrowserTools(t *testing.T) {
 	ctx := context.Background()
 
-	tools, cleanup := RegisterBrowserTools(ctx, 0)
+	tools, cleanup := RegisterBrowserTools(ctx)
 	t.Cleanup(cleanup)
 
 	if len(tools) != 6 {
@@ -623,7 +682,7 @@ func TestGetScreenshotPath(t *testing.T) {
 // TestSaveScreenshotErrorPath tests error paths in SaveScreenshot
 func TestSaveScreenshotErrorPath(t *testing.T) {
 	ctx := context.Background()
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -642,7 +701,7 @@ func TestSaveScreenshotErrorPath(t *testing.T) {
 // TestConsoleLogsWriteToFile tests that large console logs are written to file
 func TestConsoleLogsWriteToFile(t *testing.T) {
 	ctx := context.Background()
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -692,7 +751,7 @@ func TestConsoleLogsWriteToFile(t *testing.T) {
 // TestGenerateDownloadFilename tests filename generation with randomness
 func TestGenerateDownloadFilename(t *testing.T) {
 	ctx := context.Background()
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -738,7 +797,7 @@ func TestGenerateDownloadFilename(t *testing.T) {
 // TestDownloadTracking tests the download event handling
 func TestDownloadTracking(t *testing.T) {
 	ctx := context.Background()
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -787,7 +846,7 @@ func TestDownloadTracking(t *testing.T) {
 // TestToolOutWithDownloads tests the download info appending to tool output
 func TestToolOutWithDownloads(t *testing.T) {
 	ctx := context.Background()
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -874,7 +933,7 @@ func TestBrowserDownload(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -962,7 +1021,7 @@ func TestBrowserDownloadReported(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -1010,7 +1069,7 @@ func TestLargeJSOutputWriteToFile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -1074,7 +1133,7 @@ func TestSmallJSOutputInline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})

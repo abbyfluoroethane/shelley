@@ -23,6 +23,9 @@ type Service interface {
 	// For multi-image requests, some providers enforce stricter limits.
 	// Returns 0 if there is no limit.
 	MaxImageDimension() int
+	// MaxImageBytes returns the maximum allowed encoded size in bytes for a single image.
+	// Returns 0 if there is no known limit.
+	MaxImageBytes() int
 }
 
 type SimplifiedPatcher interface {

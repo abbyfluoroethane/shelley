@@ -347,6 +347,10 @@ func (s *customPredictableService) MaxImageDimension() int {
 	return 8000
 }
 
+func (s *customPredictableService) MaxImageBytes() int {
+	return 0
+}
+
 // TestNoInterruptionNormalFlow verifies that normal tool chains work correctly
 // when no interruption is queued.
 func TestNoInterruptionNormalFlow(t *testing.T) {

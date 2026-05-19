@@ -25,7 +25,7 @@ func TestBrowserProcessGroupCleanup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 
 	if _, err := tools.GetBrowserContext(); err != nil {
 		if strings.Contains(err.Error(), "failed to start browser") {

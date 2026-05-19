@@ -1508,6 +1508,10 @@ func (e *errorLLMService) MaxImageDimension() int {
 	return 2000
 }
 
+func (e *errorLLMService) MaxImageBytes() int {
+	return 5 * 1024 * 1024
+}
+
 // retryableLLMService fails with a retryable error a specified number of times, then succeeds
 type retryableLLMService struct {
 	failuresRemaining int
@@ -1538,6 +1542,10 @@ func (r *retryableLLMService) TokenContextWindow() int {
 
 func (r *retryableLLMService) MaxImageDimension() int {
 	return 2000
+}
+
+func (r *retryableLLMService) MaxImageBytes() int {
+	return 5 * 1024 * 1024
 }
 
 func (r *retryableLLMService) getCallCount() int {

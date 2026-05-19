@@ -487,6 +487,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, content []llm.Content) erro
 			toolCtx = llm.WithToolProgress(toolCtx, l.onToolProgress)
 		}
 		toolCtx = llm.WithToolUseID(toolCtx, c.ID)
+		toolCtx = llm.WithLLMService(toolCtx, l.llm)
 		startTime := time.Now()
 		result := tool.Run(toolCtx, c.ToolInput)
 		endTime := time.Now()

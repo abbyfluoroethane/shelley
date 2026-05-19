@@ -588,6 +588,11 @@ func (l *loggingService) MaxImageDimension() int {
 	return l.service.MaxImageDimension()
 }
 
+// MaxImageBytes delegates to the underlying service
+func (l *loggingService) MaxImageBytes() int {
+	return l.service.MaxImageBytes()
+}
+
 // UseSimplifiedPatch delegates to the underlying service if it supports it
 func (l *loggingService) UseSimplifiedPatch() bool {
 	if sp, ok := l.service.(llm.SimplifiedPatcher); ok {

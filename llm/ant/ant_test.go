@@ -91,6 +91,14 @@ func TestMaxImageDimension(t *testing.T) {
 	}
 }
 
+func TestMaxImageBytes(t *testing.T) {
+	s := &Service{}
+	want := 5 * 1024 * 1024
+	if got := s.MaxImageBytes(); got != want {
+		t.Errorf("MaxImageBytes() = %v, want %v", got, want)
+	}
+}
+
 func TestToLLMUsage(t *testing.T) {
 	tests := []struct {
 		name string

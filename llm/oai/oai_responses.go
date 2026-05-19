@@ -422,6 +422,13 @@ func (s *ResponsesService) MaxImageDimension() int {
 	return 0 // No known limit
 }
 
+// MaxImageBytes returns the maximum allowed encoded size for a single image.
+// OpenAI's vision docs cap image inputs at 20 MB per image
+// (https://platform.openai.com/docs/guides/images-vision).
+func (s *ResponsesService) MaxImageBytes() int {
+	return 20 * 1024 * 1024
+}
+
 // Do sends a request to OpenAI using the Responses API.
 func (s *ResponsesService) Do(ctx context.Context, ir *llm.Request) (*llm.Response, error) {
 	httpc := cmp.Or(s.HTTPC, http.DefaultClient)

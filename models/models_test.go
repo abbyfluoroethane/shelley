@@ -288,6 +288,10 @@ func (m *mockLLMService) MaxImageDimension() int {
 	return m.maxImageDimension
 }
 
+func (m *mockLLMService) MaxImageBytes() int {
+	return 5 * 1024 * 1024
+}
+
 func (m *mockLLMService) UseSimplifiedPatch() bool {
 	return m.useSimplifiedPatch
 }

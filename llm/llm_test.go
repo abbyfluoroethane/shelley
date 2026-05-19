@@ -28,6 +28,10 @@ func (m *mockService) MaxImageDimension() int {
 	return m.maxImageDimension
 }
 
+func (m *mockService) MaxImageBytes() int {
+	return 0
+}
+
 // mockSimplifiedService implements both Service and SimplifiedPatcher interfaces
 type mockSimplifiedService struct {
 	mockService

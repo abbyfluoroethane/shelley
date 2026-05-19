@@ -47,7 +47,7 @@ func newEmulateTestEnv(t *testing.T) *emulateTestEnv {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	t.Cleanup(cancel)
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() { tools.Close() })
 
 	browserTool := tools.CombinedTool()

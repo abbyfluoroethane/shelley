@@ -104,7 +104,7 @@ func TestWebAuthnPageDoesNotCrash(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
@@ -193,7 +193,7 @@ func TestWebAuthnDisabledFeatureFlag(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tools := NewBrowseTools(ctx, 0, 0)
+	tools := NewBrowseTools(ctx, 0)
 	t.Cleanup(func() {
 		tools.Close()
 	})
