@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"sync"
+
+	"tailscale.com/syncs"
 )
 
 // ChannelFactory creates a Channel from a config map.
@@ -12,25 +13,18 @@ import (
 // minus the "type" key which was already used for lookup.
 type ChannelFactory func(config map[string]any, logger *slog.Logger) (Channel, error)
 
-var (
-	registryMu sync.RWMutex
-	registry   = map[string]ChannelFactory{}
-)
+var registry syncs.Map[string, ChannelFactory]
 
 // Register adds a channel factory to the global registry.
 // Channel implementations call this in their init() functions.
 func Register(typeName string, factory ChannelFactory) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	registry[typeName] = factory
+	registry.Store(typeName, factory)
 }
 
 // RegisteredTypes returns the names of all registered channel types.
 func RegisteredTypes() []string {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	types := make([]string, 0, len(registry))
-	for t := range registry {
+	var types []string
+	for t := range registry.Keys() {
 		types = append(types, t)
 	}
 	sort.Strings(types)
@@ -45,9 +39,7 @@ func CreateFromConfig(config map[string]any, logger *slog.Logger) (Channel, erro
 		return nil, fmt.Errorf("notification channel config missing \"type\" field")
 	}
 
-	registryMu.RLock()
-	factory, ok := registry[typeName]
-	registryMu.RUnlock()
+	factory, ok := registry.Load(typeName)
 
 	if !ok {
 		return nil, fmt.Errorf("unknown notification channel type: %q", typeName)
