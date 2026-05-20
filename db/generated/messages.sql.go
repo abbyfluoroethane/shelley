@@ -535,6 +535,57 @@ func (q *Queries) ListMessagesSince(ctx context.Context, arg ListMessagesSincePa
 	return items, nil
 }
 
+const listMessagesTail = `-- name: ListMessagesTail :many
+SELECT message_id, conversation_id, sequence_id, type, llm_data, user_data, usage_data, created_at, display_data, excluded_from_context, generation FROM (
+  SELECT message_id, conversation_id, sequence_id, type, llm_data, user_data, usage_data, created_at, display_data, excluded_from_context, generation FROM messages
+  WHERE conversation_id = ?
+  ORDER BY sequence_id DESC
+  LIMIT ?
+) ORDER BY sequence_id ASC
+`
+
+type ListMessagesTailParams struct {
+	ConversationID string `json:"conversation_id"`
+	Limit          int64  `json:"limit"`
+}
+
+// Returns the last N messages in ascending order. If fewer than N
+// exist, returns all of them.
+func (q *Queries) ListMessagesTail(ctx context.Context, arg ListMessagesTailParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, listMessagesTail, arg.ConversationID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.MessageID,
+			&i.ConversationID,
+			&i.SequenceID,
+			&i.Type,
+			&i.LlmData,
+			&i.UserData,
+			&i.UsageData,
+			&i.CreatedAt,
+			&i.DisplayData,
+			&i.ExcludedFromContext,
+			&i.Generation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateMessageExcludedFromContext = `-- name: UpdateMessageExcludedFromContext :exec
 UPDATE messages SET excluded_from_context = ? WHERE message_id = ?
 `

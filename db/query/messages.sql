@@ -58,6 +58,16 @@ WHERE conversation_id = ?;
 SELECT COUNT(*) FROM messages
 WHERE conversation_id = ? AND type = ?;
 
+-- name: ListMessagesTail :many
+-- Returns the last N messages in ascending order. If fewer than N
+-- exist, returns all of them.
+SELECT * FROM (
+  SELECT * FROM messages
+  WHERE conversation_id = ?
+  ORDER BY sequence_id DESC
+  LIMIT ?
+) ORDER BY sequence_id ASC;
+
 -- name: ListMessagesSince :many
 SELECT * FROM messages
 WHERE conversation_id = ? AND sequence_id > ?

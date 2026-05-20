@@ -1325,19 +1325,15 @@ func (s *Server) handleCancelConversation(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
 }
 
-// handleStreamConversation handles GET /conversation/<id>/stream (legacy single-stream).
-// See handleStream for the unified message+list patch stream.
-// Query parameters:
-//   - last_sequence_id: Resume from this sequence ID (skip messages up to and including this ID)
+// handleStreamConversation handles GET /conversation/<id>/stream.
+// See API.md for query params; see handleStream for the unified stream.
 func (s *Server) handleStreamConversation(w http.ResponseWriter, r *http.Request, conversationID string) {
 	s.runStream(w, r, conversationID, false)
 }
 
-// handleStream handles GET /api/stream — the unified SSE stream that combines
-// per-conversation messages with conversation-list patch events. Query parameters:
-//   - conversation: optional conversation id; if empty, only list patches are sent
-//   - last_sequence_id: resume the message stream from after this sequence id
-//   - conversation_list_hash: resume the list patch stream from this hash
+// handleStream handles GET /api/stream — the unified SSE stream that
+// combines per-conversation messages with conversation-list patch
+// events. See API.md for query params.
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	s.runStream(w, r, r.URL.Query().Get("conversation"), true)
 }
@@ -1372,12 +1368,32 @@ func (s *Server) runStream(w http.ResponseWriter, r *http.Request, conversationI
 		defer listRelease()
 	}
 
-	// Parse last_sequence_id for resuming streams
+	// last_sequence_id: deliver only messages with sequence_id > N.
+	// tail: first frame contains only the last N messages.
+	// The two are mutually exclusive.
+	lastSeqRaw := query.Get("last_sequence_id")
+	tailRaw := query.Get("tail")
+	if lastSeqRaw != "" && tailRaw != "" {
+		http.Error(w, "last_sequence_id and tail are mutually exclusive", http.StatusBadRequest)
+		return
+	}
 	lastSeqID := int64(-1)
-	if lastSeqStr := query.Get("last_sequence_id"); lastSeqStr != "" {
-		if parsed, err := strconv.ParseInt(lastSeqStr, 10, 64); err == nil {
-			lastSeqID = parsed
+	if lastSeqRaw != "" {
+		parsed, err := strconv.ParseInt(lastSeqRaw, 10, 64)
+		if err != nil || parsed < 0 {
+			http.Error(w, "invalid last_sequence_id", http.StatusBadRequest)
+			return
 		}
+		lastSeqID = parsed
+	}
+	var tailN int64
+	if tailRaw != "" {
+		parsed, err := strconv.ParseInt(tailRaw, 10, 64)
+		if err != nil || parsed <= 0 {
+			http.Error(w, "invalid tail", http.StatusBadRequest)
+			return
+		}
+		tailN = parsed
 	}
 
 	// Set up SSE headers
@@ -1552,8 +1568,34 @@ func (s *Server) runStream(w http.ResponseWriter, r *http.Request, conversationI
 	// message during hydration, and we want to return the messages as they were before.
 	var messages []generated.Message
 	var conversation generated.Conversation
-	resuming := lastSeqID >= 0
-	if lastSeqID < 0 {
+	// resuming: client is not asking for the full history, so skip the
+	// context_window_size calculation (which only makes sense over it).
+	resuming := lastSeqID >= 0 || tailN > 0
+	switch {
+	case tailN > 0:
+		err := s.db.Queries(ctx, func(q *generated.Queries) error {
+			var err error
+			messages, err = q.ListMessagesTail(ctx, generated.ListMessagesTailParams{
+				ConversationID: conversationID,
+				Limit:          tailN,
+			})
+			if err != nil {
+				return err
+			}
+			conversation, err = q.GetConversation(ctx, conversationID)
+			return err
+		})
+		if err != nil {
+			s.logger.Error("Failed to get conversation data", "conversationID", conversationID, "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if len(messages) > 0 {
+			lastSeqID = messages[len(messages)-1].SequenceID
+		} else {
+			lastSeqID = 0
+		}
+	case lastSeqID < 0:
 		err := s.db.Queries(ctx, func(q *generated.Queries) error {
 			var err error
 			messages, err = q.ListMessages(ctx, conversationID)
@@ -1571,7 +1613,7 @@ func (s *Server) runStream(w http.ResponseWriter, r *http.Request, conversationI
 		if len(messages) > 0 {
 			lastSeqID = messages[len(messages)-1].SequenceID
 		}
-	} else {
+	default:
 		err := s.db.Queries(ctx, func(q *generated.Queries) error {
 			var err error
 			messages, err = q.ListMessagesSince(ctx, generated.ListMessagesSinceParams{
@@ -1643,6 +1685,12 @@ func (s *Server) runStream(w http.ResponseWriter, r *http.Request, conversationI
 		if !writeStreamData(streamData) {
 			return
 		}
+	}
+
+	// Marker between the initial replay and live updates. Sent once
+	// per connection; the connection stays open and live frames follow.
+	if !writeStreamData(StreamResponse{SnapshotComplete: true}) {
+		return
 	}
 
 	// Start heartbeat goroutine - sends state every 30 seconds if no other messages

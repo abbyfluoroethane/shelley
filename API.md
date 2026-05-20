@@ -85,7 +85,11 @@ Unless noted, results exclude **archived** conversations.
 - `GET /api/conversation/<id>` — full message history (compressed).
 - `GET /api/conversation/<id>/stream` — **legacy** SSE: messages, state,
   no list patches. Used by iOS, CLI, and Go tests; new clients should
-  use `/api/stream`.
+  use `/api/stream`. Query params:
+    - `?last_sequence_id=<n>` — resume from `sequence_id > n`.
+    - `?tail=<n>` — first frame contains only the last `n` messages.
+  A `{"snapshot_complete": true}` frame follows the initial replay
+  and precedes live updates.
 - `POST /api/conversation/<id>/chat` — send a user message.
 - `POST /api/conversation/<id>/cancel` — interrupt the running loop.
 - `POST /api/conversation/<id>/archive` / `unarchive`.
@@ -106,8 +110,9 @@ SSE stream. All query params are optional:
 - `conversation_list_hash` — the `hash` from the most recent snapshot
   or patch event the client successfully applied. The server uses it to
   decide whether to replay history or send a fresh reset event.
-- `last_sequence_id` — resume per-conversation message delivery from
-  this `sequence_id` (the largest the client has already applied).
+- `last_sequence_id`, `tail` — same semantics as on
+  `/api/conversation/<id>/stream`. A `snapshot_complete` frame
+  separates the initial replay from live updates.
 
 Event payload (`data: <json>`):
 
@@ -132,6 +137,7 @@ interface StreamResponse {
   };
 
   heartbeat?: true;                 // sent every 30s if nothing else to say
+  snapshot_complete?: true;         // once, after the initial replay
 }
 ```
 

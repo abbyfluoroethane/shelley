@@ -93,6 +93,12 @@ type StreamResponse struct {
 	ToolProgress *llm.ToolProgress `json:"tool_progress,omitempty"`
 	// StreamDelta is set when the LLM streams partial text content.
 	StreamDelta *llm.StreamDelta `json:"stream_delta,omitempty"`
+	// SnapshotComplete marks the boundary between the stream's initial
+	// replay and live updates. Sent exactly once per connection,
+	// unconditionally — even when the replay is empty. Clients can use
+	// it to hide a loading spinner, or — for "peek and disconnect" use
+	// cases like notification previews — to close the connection.
+	SnapshotComplete bool `json:"snapshot_complete,omitempty"`
 }
 
 // LLMProvider is an interface for getting LLM services
