@@ -147,16 +147,26 @@ function CommandPalette({
     };
   }, [query, searchConversations]);
 
-  // When the palette opens with no current conversation (new-conversation
-  // view), look up git roots for the locally-selected cwd so we can offer
-  // quick "change dir to git root" actions.
+  // When the palette opens, look up git roots for the locally-selected cwd
+  // (used to populate cwd for a new conversation) so we can offer quick
+  // "set new conversation dir to git root" actions. We do this even when a
+  // conversation is open — the actions set the cwd for the *next* new
+  // conversation, not the current one.
   useEffect(() => {
-    if (!isOpen || currentConversation) {
+    if (!isOpen) {
       setNewConvGitRepoRoot(null);
       setNewConvGitWorktreeRoot(null);
       return;
     }
-    const cwd = localStorage.getItem("shelley_selected_cwd");
+    // Prefer current conversation's cwd, else the sticky stored cwd, else
+    // the server-provided default cwd. The default isn't written to
+    // localStorage until the user explicitly picks a dir, so without this
+    // fallback the git-root actions wouldn't appear on a fresh install.
+    const cwd =
+      currentConversation?.cwd ||
+      localStorage.getItem("shelley_selected_cwd") ||
+      window.__SHELLEY_INIT__?.default_cwd ||
+      null;
     if (!cwd) return;
     let cancelled = false;
     api
@@ -455,12 +465,17 @@ function CommandPalette({
       });
     }
 
-    // "Change dir to git worktree/main root" — only meaningful in the
-    // new-conversation view (where there's no currentConversation and the
-    // user is picking a cwd). Sets the cwd for the next conversation.
-    const cwdRepoRoot = !currentConversation ? newConvGitRepoRoot : null;
-    const cwdWorktreeRoot = !currentConversation ? newConvGitWorktreeRoot : null;
-    const cwdNow = localStorage.getItem("shelley_selected_cwd");
+    // "Set new conversation dir to git root / workspace root" actions.
+    // These set the cwd for a *new* conversation (the current conversation's
+    // cwd is immutable). Available whenever we know the relevant root,
+    // whether from the current conversation or from the sticky cwd.
+    const cwdRepoRoot = currentConversation?.git_repo_root || newConvGitRepoRoot;
+    const cwdWorktreeRoot = currentConversation?.git_worktree_root || newConvGitWorktreeRoot;
+    const cwdNow =
+      currentConversation?.cwd ||
+      localStorage.getItem("shelley_selected_cwd") ||
+      window.__SHELLEY_INIT__?.default_cwd ||
+      null;
     const folderIcon = (
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="16" height="16">
         <path
@@ -473,30 +488,54 @@ function CommandPalette({
     );
     if (cwdRepoRoot && cwdRepoRoot !== cwdNow) {
       items.push({
-        id: "cd-git-worktree-root",
+        id: "set-dir-git-root",
         type: "action",
-        title: "Change dir to git worktree root",
+        title: "Set new conversation dir to Git root",
         subtitle: cwdRepoRoot,
         icon: folderIcon,
         action: () => {
           onNewConversationWithCwd(cwdRepoRoot);
           onClose();
         },
-        keywords: ["cd", "change", "dir", "directory", "git", "worktree", "root", "toplevel"],
+        keywords: [
+          "cd",
+          "change",
+          "set",
+          "dir",
+          "directory",
+          "cwd",
+          "git",
+          "root",
+          "toplevel",
+          "repo",
+        ],
       });
     }
     if (cwdWorktreeRoot && cwdWorktreeRoot !== cwdNow && cwdWorktreeRoot !== cwdRepoRoot) {
       items.push({
-        id: "cd-git-root",
+        id: "set-dir-git-workspace-root",
         type: "action",
-        title: "Change dir to git root",
+        title: "Set new conversation dir to Git workspace root",
         subtitle: cwdWorktreeRoot,
         icon: folderIcon,
         action: () => {
           onNewConversationWithCwd(cwdWorktreeRoot);
           onClose();
         },
-        keywords: ["cd", "change", "dir", "directory", "git", "root", "main", "repo"],
+        keywords: [
+          "cd",
+          "change",
+          "set",
+          "dir",
+          "directory",
+          "cwd",
+          "git",
+          "workspace",
+          "worktree",
+          "main",
+          "repo",
+          "root",
+        ],
       });
     }
 

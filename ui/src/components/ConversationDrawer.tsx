@@ -12,6 +12,21 @@ import { tildifyPath } from "../utils/tildify";
 
 type GroupBy = "none" | "cwd" | "git_repo";
 
+// Mirrors MessageInput's PERSIST_KEY_PREFIX + the persistKey it gets from
+// ChatInterface when no conversationId is set. Hoisted to module scope so the
+// subscription useEffect doesn't need to depend on a per-render value.
+const NEW_DRAFT_STORAGE_KEY = "shelley_draft_new-conversation";
+const NEW_DRAFT_UPDATED_AT_KEY = NEW_DRAFT_STORAGE_KEY + "_updated_at";
+
+// Sentinel conversation_id for the synthetic 'draft' row pinned at the top of
+// the list. We splice a fake ConversationWithState into the displayed list so
+// it flows through renderConversationItem exactly like a real conversation
+// (same layout, same active-state styling); the renderer special-cases this
+// id to swap the click handler, render an italic 'draft' title, and hide the
+// rename/archive/subagent buttons that don't apply to a not-yet-created
+// conversation.
+const DRAFT_CONVERSATION_ID = "__draft__";
+
 // SNIPPET_MARK_START / END match db.SnippetMarkStart / SnippetMarkEnd on the
 // server. The server wraps every matched FTS term in these sentinel bytes;
 // we split on them here and render the highlighted runs with <mark>.
@@ -123,6 +138,42 @@ function ConversationDrawer({
   const searchSeqRef = React.useRef(0);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingSlug, setEditingSlug] = useState("");
+  // Draft text for the not-yet-created conversation. Mirrors the value
+  // MessageInput persists under shelley_draft_new-conversation. We subscribe
+  // to the same-tab 'shelley-draft-changed' event (MessageInput dispatches
+  // it) and the cross-tab 'storage' event so the draft list entry stays in
+  // sync without polling.
+  const [newDraft, setNewDraft] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem(NEW_DRAFT_STORAGE_KEY) || "";
+  });
+  const [newDraftUpdatedAt, setNewDraftUpdatedAt] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem(NEW_DRAFT_UPDATED_AT_KEY) || "";
+  });
+  useEffect(() => {
+    const refresh = () => {
+      setNewDraft(localStorage.getItem(NEW_DRAFT_STORAGE_KEY) || "");
+      setNewDraftUpdatedAt(localStorage.getItem(NEW_DRAFT_UPDATED_AT_KEY) || "");
+    };
+    const onSameTab = (e: Event) => {
+      const ce = e as CustomEvent<{ key: string; value: string }>;
+      if (ce.detail?.key === "new-conversation") {
+        refresh();
+      }
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === NEW_DRAFT_STORAGE_KEY || e.key === NEW_DRAFT_UPDATED_AT_KEY) {
+        refresh();
+      }
+    };
+    window.addEventListener("shelley-draft-changed", onSameTab);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("shelley-draft-changed", onSameTab);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
   const [expandedSubagents, setExpandedSubagents] = useState<Set<string>>(new Set());
   const [groupBy, setGroupBy] = useState<GroupBy>(() => {
     const stored = localStorage.getItem("shelley-group-by");
@@ -483,11 +534,50 @@ function ConversationDrawer({
   // active-first by updated_at). Search results are NOT held by the stable
   // order — they're ranked by the server and should appear ranked.
   const isSearching = searchQuery.trim().length > 0;
-  const displayedConversations = isSearching
+
+  // Synthetic draft row. Shown when (a) the new-conversation view is active
+  // (so the list reflects the active selection just like real conversations
+  // do), or (b) localStorage still has draft content from a previous session.
+  // We build a ConversationWithState-shaped object so renderConversationItem
+  // — the single source of truth for row layout — handles it identically.
+  const showDraftRow =
+    !showArchived &&
+    !isSearching &&
+    ((currentConversationId === null && !viewedConversation) || newDraft.trim().length > 0);
+  const draftRow: ConversationWithState | null = useMemo(() => {
+    if (!showDraftRow) return null;
+    const draftCwd =
+      (typeof window !== "undefined" &&
+        (localStorage.getItem("shelley_selected_cwd") || window.__SHELLEY_INIT__?.default_cwd)) ||
+      "";
+    // Fall back to 'now' so an empty draft (no stored timestamp yet) still
+    // shows a sensible date in the meta row instead of an empty slot.
+    const updatedAt = newDraftUpdatedAt || new Date().toISOString();
+    return {
+      conversation_id: DRAFT_CONVERSATION_ID,
+      slug: null,
+      user_initiated: true,
+      created_at: updatedAt,
+      updated_at: updatedAt,
+      cwd: draftCwd || null,
+      archived: false,
+      parent_conversation_id: null,
+      model: null,
+      conversation_options: "",
+      current_generation: 0,
+      agent_working: false,
+      working: false,
+      subagent_count: 0,
+      preview: newDraft.trim() || undefined,
+    };
+  }, [showDraftRow, newDraft, newDraftUpdatedAt]);
+
+  const baseDisplayed = isSearching
     ? (searchResults ?? [])
     : showArchived
       ? stableArchivedConversations
       : topLevelConversations;
+  const displayedConversations = draftRow ? [draftRow, ...baseDisplayed] : baseDisplayed;
 
   // Compute grouped conversations
   const groupedConversations = useMemo(() => {
@@ -557,26 +647,43 @@ function ConversationDrawer({
 
   const renderConversationItem = (conversation: Conversation | ConversationWithState) => {
     const convState = conversation as ConversationWithState;
-    const isActive = conversation.conversation_id === currentConversationId;
-    const conversationSubagents = subagentsByParent[conversation.conversation_id] || [];
-    const subagentCount = conversationSubagents.length || convState.subagent_count || 0;
+    // The draft row is a synthetic ConversationWithState spliced into the
+    // list so it shares this renderer's layout. A few branches differ: it's
+    // active when no conversation is selected, its click handler creates a
+    // new conversation instead of selecting an existing one, and it omits
+    // the rename/archive/subagent buttons.
+    const isDraft = conversation.conversation_id === DRAFT_CONVERSATION_ID;
+    const isActive = isDraft
+      ? currentConversationId === null && !viewedConversation
+      : conversation.conversation_id === currentConversationId;
+    const conversationSubagents = isDraft
+      ? []
+      : subagentsByParent[conversation.conversation_id] || [];
+    const subagentCount = isDraft
+      ? 0
+      : conversationSubagents.length || convState.subagent_count || 0;
     const hasSubagents = subagentCount > 0;
     const isExpanded = expandedSubagents.has(conversation.conversation_id);
     // Use the per-row archived flag so search results (which mix active and
     // archived hits) render the correct action buttons.
     const itemArchived = conversation.archived;
     // Treat the first render (seenIds === null) as "everything already
-    // seen" so we don't animate the entire list on initial mount.
-    const isNew = seenIds !== null && !seenIds.has(conversation.conversation_id);
+    // seen" so we don't animate the entire list on initial mount. The draft
+    // row also never animates — it appears as soon as you hit the new view.
+    const isNew = !isDraft && seenIds !== null && !seenIds.has(conversation.conversation_id);
     return (
       <React.Fragment key={conversation.conversation_id}>
         <div
           className={`conversation-item ${isActive ? "active" : ""}${isNew ? " conversation-item-enter" : ""}`}
           onClick={(e) => {
+            if (isDraft) {
+              onNewConversation();
+              return;
+            }
             if (handleModifiedClick(e, conversation)) return;
             onSelectConversation(conversation);
           }}
-          onAuxClick={(e) => handleAuxClick(e, conversation)}
+          onAuxClick={(e) => (isDraft ? undefined : handleAuxClick(e, conversation))}
           style={{ cursor: "pointer" }}
         >
           <div className="drawer-conversation-item-flex-container">
@@ -594,6 +701,8 @@ function ConversationDrawer({
                     autoFocus
                     className="conversation-title drawer-rename-input"
                   />
+                ) : isDraft ? (
+                  <div className="conversation-title conversation-title-draft">draft</div>
                 ) : (
                   <div className="conversation-title">{getConversationPreview(conversation)}</div>
                 )}
@@ -624,7 +733,7 @@ function ConversationDrawer({
                   {formatCwdForDisplay(conversation.cwd)}
                 </span>
               )}
-              {!itemArchived && hasSubagents && (
+              {!isDraft && !itemArchived && hasSubagents && (
                 <button
                   onClick={(e) => toggleSubagents(e, conversation.conversation_id)}
                   className="subagent-count-badge"
@@ -651,7 +760,7 @@ function ConversationDrawer({
                   </svg>
                 </button>
               )}
-              {!itemArchived && (
+              {!isDraft && !itemArchived && (
                 <div className="conversation-actions drawer-actions-row">
                   <button
                     onClick={(e) => handleStartRename(e, conversation)}
@@ -1008,6 +1117,11 @@ function ConversationDrawer({
             </div>
           ) : groupedConversations ? (
             <div className="conversation-list">
+              {/* When grouping is active the grouped list is built from
+                  topLevelConversations (real conversations only), so render
+                  the synthetic draft row above the groups so it doesn't get
+                  dropped. */}
+              {draftRow && renderConversationItem(draftRow)}
               {groupedConversations.map(([key, group]) => {
                 const isCollapsed = collapsedGroups.has(key);
                 return (

@@ -489,8 +489,8 @@ function App() {
     // Clear the current conversation - a new one will be created when the user sends their first message
     setCurrentConversationId(null);
     setViewedConversation(null);
-    // Clear URL when starting new conversation
-    window.history.replaceState({}, "", "/");
+    // Navigate to /new so a reload keeps the user in the new-conversation view.
+    window.history.replaceState({}, "", "/new");
     setDrawerOpen(false);
   };
 
@@ -498,7 +498,7 @@ function App() {
     localStorage.setItem("shelley_selected_cwd", cwd);
     setCurrentConversationId(null);
     setViewedConversation(null);
-    window.history.replaceState({}, "", "/");
+    window.history.replaceState({}, "", "/new");
     setDrawerOpen(false);
     // Force ChatInterface to re-read the cwd from localStorage even if it's
     // already mounted in the new-conversation view.

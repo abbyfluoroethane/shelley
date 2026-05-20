@@ -557,14 +557,27 @@ function MessageInput({
     }
   }, [submitting]);
 
-  // Persist draft to localStorage when persistKey is set
+  // Persist draft to localStorage when persistKey is set, alongside a sibling
+  // 'updated_at' timestamp so the ConversationDrawer's draft entry can show
+  // a real timestamp in its meta row (same as actual conversations).
   useEffect(() => {
     if (persistKey) {
+      const tsKey = PERSIST_KEY_PREFIX + persistKey + "_updated_at";
       if (message) {
         localStorage.setItem(PERSIST_KEY_PREFIX + persistKey, message);
+        localStorage.setItem(tsKey, new Date().toISOString());
       } else {
         localStorage.removeItem(PERSIST_KEY_PREFIX + persistKey);
+        localStorage.removeItem(tsKey);
       }
+      // Notify listeners (e.g. ConversationDrawer's draft entry) so they can
+      // refresh without polling. localStorage's 'storage' event only fires
+      // cross-tab, hence this custom event for same-tab updates.
+      window.dispatchEvent(
+        new CustomEvent("shelley-draft-changed", {
+          detail: { key: persistKey, value: message },
+        }),
+      );
     }
   }, [message, persistKey]);
 

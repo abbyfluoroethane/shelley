@@ -736,6 +736,13 @@ button {
   color: white;
 }
 
+/* Pinned draft entry that represents the not-yet-created new conversation.
+   Styled like a regular conversation item; the slug-like title is italicized
+   to signal that it's a placeholder (no real slug yet). */
+.conversation-title-draft {
+  font-style: italic;
+}
+
 .conversation-item .conversation-title {
   font-weight: 500;
   font-size: 0.875rem;
