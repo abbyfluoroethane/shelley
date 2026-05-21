@@ -1,9 +1,4 @@
-import type {
-  ConversationListPatchEvent,
-  ConversationListPatchOp,
-  ConversationWithState,
-} from "../types";
-import { api } from "./api";
+import type { ConversationListPatchOp, ConversationWithState } from "../types";
 
 function decodePointer(path: string): string[] {
   if (path === "") return [];
@@ -149,83 +144,4 @@ export function applyConversationListPatch(
     throw new Error("conversation list patch did not produce an array");
   }
   return doc as ConversationWithState[];
-}
-export interface ConversationListStreamHandle {
-  close: () => void;
-}
-
-interface ConversationListStreamOptions {
-  getHash: () => string | null;
-  onPatch: (event: ConversationListPatchEvent) => void;
-  onStatusChange?: (status: "connected" | "reconnecting" | "disconnected") => void;
-}
-
-export function connectConversationListStream({
-  getHash,
-  onPatch,
-  onStatusChange,
-}: ConversationListStreamOptions): ConversationListStreamHandle {
-  let closed = false;
-  let eventSource: EventSource | null = null;
-  let reconnectTimer: number | null = null;
-  let attempts = 0;
-
-  const clearReconnect = () => {
-    if (reconnectTimer !== null) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-  };
-
-  const connect = () => {
-    if (closed) return;
-    clearReconnect();
-    eventSource?.close();
-    eventSource = api.createStream({ conversationListHash: getHash() ?? undefined });
-
-    eventSource.onmessage = (event) => {
-      attempts = 0;
-      onStatusChange?.("connected");
-      try {
-        const data = JSON.parse(event.data) as {
-          conversation_list_patch?: ConversationListPatchEvent;
-        };
-        if (data.conversation_list_patch) {
-          onPatch(data.conversation_list_patch);
-        }
-      } catch (err) {
-        console.error("Failed to apply conversation list patch:", err);
-        onStatusChange?.("reconnecting");
-        eventSource?.close();
-        eventSource = null;
-        reconnectTimer = window.setTimeout(connect, 1000);
-      }
-    };
-
-    eventSource.onopen = () => {
-      attempts = 0;
-      onStatusChange?.("connected");
-    };
-
-    eventSource.onerror = () => {
-      if (closed) return;
-      eventSource?.close();
-      eventSource = null;
-      attempts += 1;
-      onStatusChange?.(attempts > 3 ? "disconnected" : "reconnecting");
-      const delay = attempts <= 1 ? 1000 : attempts === 2 ? 2000 : attempts === 3 ? 5000 : 30000;
-      reconnectTimer = window.setTimeout(connect, delay);
-    };
-  };
-
-  connect();
-
-  return {
-    close() {
-      closed = true;
-      clearReconnect();
-      eventSource?.close();
-      eventSource = null;
-    },
-  };
 }

@@ -10,11 +10,10 @@ import NotificationsModal from "./components/NotificationsModal";
 import { focusMessageInputIfUnfocused } from "./utils/focusMessageInput";
 import { Conversation, ConversationWithState, ConversationListPatchEvent } from "./types";
 import { api } from "./services/api";
-import { conversationCache } from "./services/conversationCache";
-import {
-  applyConversationListPatch,
-  connectConversationListStream,
-} from "./services/conversationListStream";
+import { messageStore } from "./services/messageStore";
+import { applyConversationListPatch } from "./services/conversationListStream";
+import { connectGlobalStream, type StreamStatus } from "./services/globalStream";
+import { handleNotificationEvent } from "./services/notifications";
 import { useI18n } from "./i18n";
 
 // Worker pool configuration for @pierre/diffs syntax highlighting
@@ -138,6 +137,11 @@ function App() {
   // (via dtach sessions on the server) page reloads. We hydrate from the
   // server's terminal list on mount.
   const [ephemeralTerminals, setEphemeralTerminals] = useState<EphemeralTerminal[]>([]);
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>("connected");
+  // Bumped each time the global stream reconnects, so ChatInterface can
+  // reload the focused conversation's history (it may have missed events
+  // while the stream was down).
+  const [reconnectNonce, setReconnectNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -407,8 +411,13 @@ function App() {
         const nextIds = new Set(next.map((conv) => conv.conversation_id));
         for (const conv of prev) {
           if (!nextIds.has(conv.conversation_id)) {
-            conversationCache.delete(conv.conversation_id);
+            void messageStore.delete(conv.conversation_id);
           }
+        }
+        // Propagate server-reported max_sequence_id for all conversations in
+        // the updated list so ChatInterface can skip unnecessary backfills.
+        for (const conv of next) {
+          messageStore.setMaxSequenceIdKnown(conv.conversation_id, conv.max_sequence_id);
         }
         return next;
       });
@@ -417,23 +426,26 @@ function App() {
     [syncConversations],
   );
 
-  // Open the standalone list-only stream only when no conversation is
-  // selected. When one is selected, ChatInterface opens the combined stream
-  // (messages + list patches) so the UI never holds more than one
-  // subscription at a time.
+  // Open the single long-lived /api/stream2 connection. The server delivers
+  // events for ALL active conversations on this connection; per-conversation
+  // events are routed by `conversation_id` into messageStore by the global
+  // stream handler. Backfill of a focused conversation's history happens via
+  // REST in ChatInterface.
   useEffect(() => {
-    if (currentConversationId) return;
-    const stream = connectConversationListStream({
+    const stream = connectGlobalStream({
       getHash: () => conversationListHashRef.current,
-      onPatch: handleConversationListPatch,
-      onStatusChange: (status) => {
-        if (status !== "connected") {
-          console.warn(`Conversation list stream ${status}`);
-        }
+      onListPatch: handleConversationListPatch,
+      onNotificationEvent: handleNotificationEvent,
+      onStatusChange: setStreamStatus,
+      onReconnect: () => {
+        // Stream came back after a disconnect. messageStore.markAllStale()
+        // already cleared hasFullHistory; bump the nonce so ChatInterface
+        // re-fetches the focused conversation's history immediately.
+        setReconnectNonce((n) => n + 1);
       },
     });
     return () => stream.close();
-  }, [currentConversationId, handleConversationListPatch]);
+  }, [handleConversationListPatch]);
 
   // Update page title and URL when conversation changes
   useEffect(() => {
@@ -453,6 +465,16 @@ function App() {
       setLoading(true);
       setError(null);
       const snapshot = await api.getConversationsSnapshot();
+      // Seed max_sequence_id_known from the freshly-loaded list so ChatInterface
+      // can skip the REST backfill if the cache is already up-to-date.
+      for (const conv of snapshot.conversations) {
+        messageStore.setMaxSequenceIdKnown(conv.conversation_id, conv.max_sequence_id);
+      }
+      // Prune IDB cache for archived/forgotten conversations (not in the
+      // server's list anymore, and not touched locally for over a week).
+      // Fire-and-forget; failure here is non-fatal.
+      const activeIds = snapshot.conversations.map((c) => c.conversation_id);
+      void messageStore.pruneStale(activeIds, 7 * 24 * 60 * 60 * 1000);
       const streamHash = conversationListHashRef.current;
       if (!streamHash) {
         syncConversations(() => snapshot.conversations);
@@ -515,16 +537,19 @@ function App() {
     setDrawerCollapsed((prev) => !prev);
   };
 
-  const updateConversation = (updatedConversation: Conversation) => {
-    // The top-level conversation list is owned by the patch stream; keep the
-    // currently viewed metadata fresh without changing that list out-of-band.
-    if (updatedConversation.conversation_id === currentConversationId) {
-      setViewedConversation(updatedConversation);
-    }
-  };
+  const updateConversation = useCallback(
+    (updatedConversation: Conversation) => {
+      // The top-level conversation list is owned by the patch stream; keep the
+      // currently viewed metadata fresh without changing that list out-of-band.
+      if (updatedConversation.conversation_id === currentConversationId) {
+        setViewedConversation(updatedConversation);
+      }
+    },
+    [currentConversationId],
+  );
 
   const handleConversationArchived = (conversationId: string) => {
-    conversationCache.delete(conversationId);
+    void messageStore.delete(conversationId);
     // If the archived conversation was current, switch immediately; the patch
     // stream will remove it from the list.
     if (currentConversationId === conversationId) {
@@ -581,7 +606,7 @@ function App() {
   const currentConversation =
     conversations.find((conv) => conv.conversation_id === currentConversationId) ||
     (viewedConversation?.conversation_id === currentConversationId
-      ? { ...viewedConversation, working: false, subagent_count: 0 }
+      ? { ...viewedConversation, working: false, subagent_count: 0, max_sequence_id: 0 }
       : undefined);
 
   // Get the CWD from the current conversation, or fall back to the most recent conversation
@@ -667,6 +692,8 @@ function App() {
         <div className="main-content">
           <ChatInterface
             conversationId={currentConversationId}
+            streamStatus={streamStatus}
+            reconnectNonce={reconnectNonce}
             onOpenDrawer={() => setDrawerOpen(true)}
             onNewConversation={startNewConversation}
             onArchiveConversation={async (conversationId: string) => {
@@ -675,8 +702,6 @@ function App() {
             }}
             currentConversation={currentConversation}
             onConversationUpdate={updateConversation}
-            conversationListHash={conversationListHashRef.current}
-            onConversationListPatch={handleConversationListPatch}
             onFirstMessage={handleFirstMessage}
             onDistillNewGeneration={handleDistillNewGeneration}
             mostRecentCwd={mostRecentCwd}

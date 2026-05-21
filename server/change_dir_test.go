@@ -316,7 +316,7 @@ func TestChangeDirBroadcastsConversationListPatch(t *testing.T) {
 	streamCtx, streamCancel := context.WithCancel(context.Background())
 	defer streamCancel()
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream", nil).WithContext(streamCtx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2", nil).WithContext(streamCtx)
 	done := make(chan struct{})
 	go func() {
 		server.handleStream(rec, req)

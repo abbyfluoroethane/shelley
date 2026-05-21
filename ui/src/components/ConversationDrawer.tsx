@@ -568,6 +568,7 @@ function ConversationDrawer({
       agent_working: false,
       working: false,
       subagent_count: 0,
+      max_sequence_id: 0,
       preview: newDraft.trim() || undefined,
     };
   }, [showDraftRow, newDraft, newDraftUpdatedAt]);

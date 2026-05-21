@@ -48,6 +48,10 @@ type ConversationManager struct {
 	toolSet             *claudetool.ToolSet // created per-conversation when loop starts
 
 	subpub *subpub.SubPub[StreamResponse]
+	// streamPub mirrors per-conversation events to the server-wide /api/stream2
+	// subscribers. Each event is tagged with the manager's ConversationID by
+	// the publish helpers below before fan-out.
+	streamPub *subpub.SubPub[StreamResponse]
 
 	// hydrateMu serializes Hydrate so concurrent callers don't race on the
 	// fields it populates (cwd, modelID, conversationOptions, toolSetConfig,
@@ -81,7 +85,7 @@ type ConversationManager struct {
 }
 
 // NewConversationManager constructs a manager with dependencies but defers hydration until needed.
-func NewConversationManager(conversationID string, database *db.DB, baseLogger *slog.Logger, toolSetConfig claudetool.ToolSetConfig, recordMessage loop.MessageRecordFunc, onStateChange func(ConversationState)) *ConversationManager {
+func NewConversationManager(conversationID string, database *db.DB, baseLogger *slog.Logger, toolSetConfig claudetool.ToolSetConfig, recordMessage loop.MessageRecordFunc, onStateChange func(ConversationState), streamPub *subpub.SubPub[StreamResponse]) *ConversationManager {
 	logger := baseLogger
 	if logger == nil {
 		logger = slog.Default()
@@ -96,7 +100,31 @@ func NewConversationManager(conversationID string, database *db.DB, baseLogger *
 		logger:         logger,
 		toolSetConfig:  toolSetConfig,
 		subpub:         subpub.New[StreamResponse](),
+		streamPub:      streamPub,
 		onStateChange:  onStateChange,
+	}
+}
+
+// broadcastStream tags data with the conversation ID and fans it out to both
+// the per-conversation subpub (used by the legacy /api/conversation/<id>/stream
+// endpoint) and the server-wide stream (used by /api/stream2).
+func (cm *ConversationManager) broadcastStream(data StreamResponse) {
+	data.ConversationID = cm.conversationID
+	cm.subpub.Broadcast(data)
+	if cm.streamPub != nil {
+		cm.streamPub.Broadcast(data)
+	}
+}
+
+// publishStream tags data with the conversation ID and publishes to the
+// per-conversation subpub at the given sequence id, also broadcasting to the
+// server-wide stream. Sequence ids are per-conversation and meaningless on
+// the global stream, so we Broadcast rather than Publish there.
+func (cm *ConversationManager) publishStream(seqID int64, data StreamResponse) {
+	data.ConversationID = cm.conversationID
+	cm.subpub.Publish(seqID, data)
+	if cm.streamPub != nil {
+		cm.streamPub.Broadcast(data)
 	}
 }
 
@@ -924,7 +952,7 @@ func (cm *ConversationManager) ensureLoop(service llm.Service, modelID string) e
 			logger.Error("failed to get conversation for cwd broadcast", "error", err)
 			return
 		}
-		cm.subpub.Broadcast(StreamResponse{
+		cm.broadcastStream(StreamResponse{
 			Conversation: &conv,
 		})
 		// The list patch stream refreshes from the Pool commit hook.
@@ -961,7 +989,7 @@ func (cm *ConversationManager) ensureLoop(service llm.Service, modelID string) e
 	// streamFlusher batches LLM stream deltas and flushes them periodically
 	// to avoid overwhelming the subpub channel (buffer=10) with hundreds
 	// of individual deltas per second from the Anthropic SSE stream.
-	sf := newStreamFlusher(cm.subpub, 50*time.Millisecond)
+	sf := newStreamFlusher(cm, 50*time.Millisecond)
 
 	loopInstance := loop.NewLoop(loop.Config{
 		LLM:           service,
@@ -976,7 +1004,7 @@ func (cm *ConversationManager) ensureLoop(service llm.Service, modelID string) e
 			cm.recordGitStateChange(ctx, state)
 		},
 		OnToolProgress: func(progress llm.ToolProgress) {
-			cm.subpub.Broadcast(StreamResponse{
+			cm.broadcastStream(StreamResponse{
 				ToolProgress: &progress,
 			})
 		},
@@ -1280,5 +1308,5 @@ func (cm *ConversationManager) notifyGitStateChange(ctx context.Context, msg *ge
 		Messages:     apiMessages,
 		Conversation: &conversation,
 	}
-	cm.subpub.Publish(msg.SequenceID, streamData)
+	cm.publishStream(msg.SequenceID, streamData)
 }

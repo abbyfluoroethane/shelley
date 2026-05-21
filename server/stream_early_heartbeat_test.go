@@ -39,7 +39,7 @@ func TestConversationStreamFlushesEarlyHeartbeat(t *testing.T) {
 	rec := newFlusherRecorder()
 	req := httptest.NewRequest(
 		http.MethodGet,
-		"/api/stream?conversation="+conv.ConversationID+"&conversation_list_hash="+currentHash, nil,
+		"/api/stream2?conversation="+conv.ConversationID+"&conversation_list_hash="+currentHash, nil,
 	).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
@@ -93,7 +93,7 @@ func TestConversationListOnlyStreamDoesNotSendEarlyHeartbeat(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream?conversation_list_hash="+currentHash, nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2?conversation_list_hash="+currentHash, nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
 		server.handleStream(rec, req)

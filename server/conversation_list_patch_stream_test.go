@@ -18,7 +18,7 @@ func TestConversationListPatchStreamInitialResetAndNewConversation(t *testing.T)
 	defer cancel()
 
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2", nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
 		server.handleStream(rec, req)
@@ -67,7 +67,7 @@ func TestConversationListPatchStreamReplaysHistoryFromOldHash(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2", nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
 		server.handleStream(rec, req)
@@ -88,7 +88,7 @@ func TestConversationListPatchStreamReplaysHistoryFromOldHash(t *testing.T) {
 	replayCtx, replayCancel := context.WithCancel(context.Background())
 	defer replayCancel()
 	replayRec := newFlusherRecorder()
-	replayReq := httptest.NewRequest(http.MethodGet, "/api/stream?conversation_list_hash="+initial.NewHash, nil).WithContext(replayCtx)
+	replayReq := httptest.NewRequest(http.MethodGet, "/api/stream2?conversation_list_hash="+initial.NewHash, nil).WithContext(replayCtx)
 	replayDone := make(chan struct{})
 	go func() {
 		server.handleStream(replayRec, replayReq)
@@ -127,7 +127,7 @@ func TestConversationListPatchStreamUnknownHashStartsOver(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream?conversation_list_hash=bogus", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2?conversation_list_hash=bogus", nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
 		server.handleStream(rec, req)
@@ -161,7 +161,7 @@ func TestConversationListPatchStreamWorkingState(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2", nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
 		server.handleStream(rec, req)
@@ -216,7 +216,7 @@ func TestConversationListPatchStreamRemovesAndReorders(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2", nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() { server.handleStream(rec, req); close(done) }()
 
@@ -269,7 +269,7 @@ func TestConversationListPatchStreamRapidReordersApplyCleanly(t *testing.T) {
 
 	streamCtx, cancel := context.WithCancel(context.Background())
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream", nil).WithContext(streamCtx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2", nil).WithContext(streamCtx)
 	done := make(chan struct{})
 	go func() {
 		server.handleStream(rec, req)
@@ -313,7 +313,7 @@ func TestConversationListPatchStreamCurrentHashSkipsInitial(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream?conversation_list_hash="+currentHash, nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2?conversation_list_hash="+currentHash, nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() { server.handleStream(rec, req); close(done) }()
 
@@ -409,7 +409,7 @@ func TestConversationListPatchStreamSurvivesHistoryTrim(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2", nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
 		server.handleStream(rec, req)

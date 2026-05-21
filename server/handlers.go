@@ -787,7 +787,7 @@ type ConversationListSnapshot struct {
 // served separately by /api/conversations/archived.
 //
 // The hash exists so a client can fetch the current state once and then
-// resume incremental updates over /api/stream without racing concurrent
+// resume incremental updates over /api/stream2 without racing concurrent
 // Tx commits.
 func (s *Server) handleConversationsSnapshot(w http.ResponseWriter, r *http.Request) {
 	list, hash, err := s.conversationListStream.snapshot(r.Context())
@@ -870,6 +870,12 @@ func (s *Server) decorateConversations(ctx context.Context, conversations []gene
 		previews = nil
 	}
 
+	maxSeqs, err := s.db.GetMaxSequenceIDsForAllConversations(ctx)
+	if err != nil {
+		s.logger.Error("Failed to load max sequence IDs", "error", err)
+		maxSeqs = nil
+	}
+
 	now := time.Now()
 	result := make([]ConversationWithState, len(conversations))
 	for i, conv := range conversations {
@@ -880,6 +886,7 @@ func (s *Server) decorateConversations(ctx context.Context, conversations []gene
 			SubagentCount:    subagentCounts[conv.ConversationID],
 			Preview:          pv.text,
 			PreviewUpdatedAt: pv.updatedAt,
+			MaxSequenceID:    maxSeqs[conv.ConversationID],
 		}
 		if conv.Cwd != nil {
 			entry, ok := s.conversationListGitCache.get(*conv.Cwd, now)
@@ -990,11 +997,22 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request, c
 
 	w.Header().Set("Content-Type", "application/json")
 	apiMessages := toAPIMessages(messages)
+	// max_sequence_id lets clients tell whether their cache is up to date
+	// without needing a separate query. Compute from the message list rather
+	// than reaching into the conversation manager so this endpoint works for
+	// inactive conversations too.
+	var maxSeq int64
+	for _, m := range messages {
+		if m.SequenceID > maxSeq {
+			maxSeq = m.SequenceID
+		}
+	}
 	json.NewEncoder(w).Encode(StreamResponse{
 		Messages:     apiMessages,
 		Conversation: &conversation,
 		// ConversationState is sent via the streaming endpoint, not on initial load
 		ContextWindowSize: calculateContextWindowSize(apiMessages),
+		MaxSequenceID:     maxSeq,
 	})
 }
 
@@ -1332,7 +1350,7 @@ func (s *Server) handleStreamConversation(w http.ResponseWriter, r *http.Request
 	s.runStream(w, r, conversationID, false)
 }
 
-// handleStream handles GET /api/stream — the unified SSE stream that
+// handleStream handles GET /api/stream2 — the unified SSE stream that
 // combines per-conversation messages with conversation-list patch
 // events. See API.md for query params.
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
@@ -1505,7 +1523,7 @@ func (s *Server) runStream(w http.ResponseWriter, r *http.Request, conversationI
 		}
 	}
 
-	// For per-conversation streams on the unified /api/stream endpoint that
+	// For per-conversation streams on the unified /api/stream2 endpoint that
 	// have no list replay to emit, send a bare heartbeat *before* the blocking
 	// per-conversation work (Hydrate, message read) so the client always sees
 	// a first flush within milliseconds. Hydrate walks the working tree for
@@ -1543,9 +1561,31 @@ func (s *Server) runStream(w http.ResponseWriter, r *http.Request, conversationI
 		}()
 	}
 
+	// On /api/stream2 we subscribe to the server-wide streamPub once and receive
+	// events for ALL active conversations on the same connection. The optional
+	// ?conversation= parameter governs only backfill of that conversation's
+	// initial history (handled below).
+	if includeConversationListPatches && s.streamPub != nil {
+		next := s.streamPub.Subscribe(ctx, -1)
+		go func() {
+			for {
+				streamData, cont := next()
+				if !cont {
+					return
+				}
+				select {
+				case updates <- streamData:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	if conversationID == "" {
-		// List-only stream: keep alive with a periodic heartbeat so intermediaries
-		// don't time the connection out, and forward list patches as they arrive.
+		// Stream without backfill: forward events from streamPub and list
+		// patches, with a periodic heartbeat so intermediaries don't time
+		// the connection out.
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -1644,11 +1684,18 @@ func (s *Server) runStream(w http.ResponseWriter, r *http.Request, conversationI
 		return
 	}
 
+	// On /api/stream2, live events arrive via the server-wide streamPub
+	// subscription set up above. The per-conversation subpub is used only by
+	// the legacy /api/conversation/<id>/stream endpoint.
+	//
 	// Subscribe BEFORE sending initial data so we don't miss broadcasts that
 	// happen between the DB query and the start of the event loop. The subpub
 	// channel is buffered (10), so events arriving while we write the initial
 	// response are queued rather than lost.
-	next := manager.subpub.Subscribe(ctx, lastSeqID)
+	var next func() (StreamResponse, bool)
+	if !includeConversationListPatches {
+		next = manager.subpub.Subscribe(ctx, lastSeqID)
+	}
 
 	if len(messages) > 0 {
 		apiMessages := toAPIMessages(messages)
@@ -1660,11 +1707,12 @@ func (s *Server) runStream(w http.ResponseWriter, r *http.Request, conversationI
 			ctxSize = calculateContextWindowSize(apiMessages)
 		}
 		streamData := StreamResponse{
-			Messages:     apiMessages,
-			Conversation: &conversation,
+			ConversationID: conversationID,
+			Messages:       apiMessages,
+			Conversation:   &conversation,
 			ConversationState: &ConversationState{
 				ConversationID: conversationID,
-				Working:        manager.IsAgentWorking(),
+				Working:        conversation.AgentWorking,
 				Model:          manager.GetModel(),
 			},
 			ContextWindowSize: ctxSize,
@@ -1675,10 +1723,11 @@ func (s *Server) runStream(w http.ResponseWriter, r *http.Request, conversationI
 	} else {
 		// Either resuming or no messages yet - send current state as heartbeat
 		streamData := StreamResponse{
-			Conversation: &conversation,
+			ConversationID: conversationID,
+			Conversation:   &conversation,
 			ConversationState: &ConversationState{
 				ConversationID: conversationID,
-				Working:        manager.IsAgentWorking(),
+				Working:        conversation.AgentWorking,
 				Model:          manager.GetModel(),
 			},
 			Heartbeat: true,
@@ -1721,35 +1770,46 @@ func (s *Server) runStream(w http.ResponseWriter, r *http.Request, conversationI
 					Conversation: &conv,
 					ConversationState: &ConversationState{
 						ConversationID: conversationID,
-						Working:        manager.IsAgentWorking(),
+						Working:        conv.AgentWorking,
 						Model:          manager.GetModel(),
 					},
 					Heartbeat: true,
 				}
-				manager.subpub.Broadcast(heartbeat)
+				manager.broadcastStream(heartbeat)
 			}
 		}
 	}()
 	defer close(heartbeatDone)
 
-	go func() {
-		for {
-			streamData, cont := next()
-			if !cont {
-				return
+	if next != nil {
+		go func() {
+			for {
+				streamData, cont := next()
+				if !cont {
+					return
+				}
+				select {
+				case updates <- streamData:
+				case <-ctx.Done():
+					return
+				}
 			}
-			select {
-			case updates <- streamData:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+		}()
+	}
 
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-ticker.C:
+			// Local heartbeat keeps the connection alive even when no active
+			// manager is broadcasting one (e.g., on /api/stream2 with no
+			// activity across any conversation).
+			if !writeStreamData(StreamResponse{Heartbeat: true}) {
+				return
+			}
 		case streamData := <-updates:
 			// Always forward updates, even if only the conversation changed (e.g., slug added).
 			if !writeStreamData(streamData) {
@@ -2559,7 +2619,7 @@ func (s *Server) startNewGeneration(ctx context.Context, conversationID string) 
 		}
 	}
 
-	manager.subpub.Broadcast(StreamResponse{Conversation: &conversation})
+	manager.broadcastStream(StreamResponse{Conversation: &conversation})
 	s.publishConversationListUpdate(ConversationListUpdate{Type: "update", Conversation: &conversation})
 
 	return conversation, nil

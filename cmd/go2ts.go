@@ -119,14 +119,17 @@ type conversationWithStateForTS struct {
 	Preview              string  `json:"preview,omitempty"`
 	PreviewUpdatedAt     string  `json:"preview_updated_at,omitempty"`
 	SearchSnippet        string  `json:"search_snippet,omitempty"`
+	MaxSequenceID        int64   `json:"max_sequence_id"`
 }
 
 type streamResponseForTS struct {
+	ConversationID    string                  `json:"conversation_id,omitempty"`
 	Messages          []apiMessageForTS       `json:"messages,omitempty"`
 	Conversation      *generated.Conversation `json:"conversation,omitempty"`
 	ConversationState *conversationStateForTS `json:"conversation_state,omitempty"`
 	Heartbeat         bool                    `json:"heartbeat,omitempty"`
 	NotificationEvent *notificationEventForTS `json:"notification_event,omitempty"`
+	MaxSequenceID     int64                   `json:"max_sequence_id,omitempty"`
 }
 
 type notificationEventForTS struct {

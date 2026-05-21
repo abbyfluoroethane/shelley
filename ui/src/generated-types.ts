@@ -57,11 +57,13 @@ export interface NotificationEventForTS {
 }
 
 export interface StreamResponseForTS {
+  conversation_id?: string;
   messages?: ApiMessageForTS[] | null;
   conversation?: Conversation | null;
   conversation_state?: ConversationStateForTS | null;
   heartbeat?: boolean;
   notification_event?: NotificationEventForTS | null;
+  max_sequence_id?: number;
 }
 
 export interface ConversationWithStateForTS {
@@ -86,6 +88,7 @@ export interface ConversationWithStateForTS {
   preview?: string;
   preview_updated_at?: string;
   search_snippet?: string;
+  max_sequence_id: number;
 }
 
 export type MessageType = "user" | "agent" | "tool" | "error" | "system" | "gitinfo";

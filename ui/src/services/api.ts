@@ -211,26 +211,19 @@ class ApiService {
     }
   }
 
-  // createStream opens the unified message + conversation-list-patch SSE stream.
-  // Pass conversationId to receive that conversation's messages and state in
-  // addition to list patches; omit it for a list-only subscription.
-  createStream(opts: {
-    conversationId?: string;
-    lastSequenceId?: number;
-    conversationListHash?: string;
-  }): EventSource {
+  // createStream opens the unified SSE stream. It delivers per-conversation
+  // events (messages, conversation, conversation_state, tool_progress,
+  // stream_delta, context_window_size) for ALL active conversations on a
+  // single connection, plus server-wide events (conversation_list_patch,
+  // notification_event, heartbeat). Each per-conversation event carries a
+  // top-level conversation_id field for routing.
+  createStream(opts: { conversationListHash?: string } = {}): EventSource {
     const params = new URLSearchParams();
-    if (opts.conversationId) {
-      params.set("conversation", opts.conversationId);
-    }
-    if (opts.lastSequenceId !== undefined && opts.lastSequenceId >= 0) {
-      params.set("last_sequence_id", String(opts.lastSequenceId));
-    }
     if (opts.conversationListHash) {
       params.set("conversation_list_hash", opts.conversationListHash);
     }
     const query = params.toString();
-    return new EventSource(`${this.baseUrl}/stream${query ? `?${query}` : ""}`);
+    return new EventSource(`${this.baseUrl}/stream2${query ? `?${query}` : ""}`);
   }
 
   async cancelConversation(conversationId: string): Promise<void> {

@@ -376,7 +376,7 @@ func TestConversationStreamIncludesListPatchInitialReset(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream?conversation="+conversation.ConversationID, nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2?conversation="+conversation.ConversationID, nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
 		server.handleStream(rec, req)
@@ -408,7 +408,7 @@ func TestConversationStreamListPatchReplaysFromHash(t *testing.T) {
 
 	patchCtx, patchCancel := context.WithCancel(context.Background())
 	patchRec := newFlusherRecorder()
-	patchReq := httptest.NewRequest(http.MethodGet, "/api/stream", nil).WithContext(patchCtx)
+	patchReq := httptest.NewRequest(http.MethodGet, "/api/stream2", nil).WithContext(patchCtx)
 	patchDone := make(chan struct{})
 	go func() {
 		server.handleStream(patchRec, patchReq)
@@ -427,7 +427,7 @@ func TestConversationStreamListPatchReplaysFromHash(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream?conversation="+conversation.ConversationID+"&conversation_list_hash="+initial.NewHash, nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2?conversation="+conversation.ConversationID+"&conversation_list_hash="+initial.NewHash, nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
 		server.handleStream(rec, req)
@@ -466,7 +466,7 @@ func TestConversationStreamListPatchCurrentHashSkipsInitialAndStreamsLive(t *tes
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rec := newFlusherRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream?conversation="+conversation.ConversationID+"&conversation_list_hash="+currentHash, nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/stream2?conversation="+conversation.ConversationID+"&conversation_list_hash="+currentHash, nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
 		server.handleStream(rec, req)

@@ -28,6 +28,7 @@ import (
 	"shelley.exe.dev/llm"
 	"shelley.exe.dev/models"
 	"shelley.exe.dev/server/notifications"
+	"shelley.exe.dev/subpub"
 	"shelley.exe.dev/ui"
 )
 
@@ -69,6 +70,10 @@ type ConversationWithState struct {
 	SubagentCount    int64  `json:"subagent_count"`
 	Preview          string `json:"preview,omitempty"`
 	PreviewUpdatedAt string `json:"preview_updated_at,omitempty"`
+	// MaxSequenceID is the highest message sequence_id stored for this
+	// conversation. Clients use it to decide whether their cached snapshot
+	// is up to date without a separate /api/conversation/<id> roundtrip.
+	MaxSequenceID int64 `json:"max_sequence_id"`
 	// SearchSnippet is set on hits from /api/conversations/search. Matched
 	// terms are wrapped in \x02..\x03 sentinels (see db.SnippetMarkStart /
 	// SnippetMarkEnd) so the UI can substitute spans without HTML injection.
@@ -77,6 +82,12 @@ type ConversationWithState struct {
 
 // StreamResponse represents the response format for conversation streaming
 type StreamResponse struct {
+	// ConversationID identifies which conversation this per-conversation
+	// event belongs to. The unified /api/stream2 delivers events for all
+	// active conversations on a single connection; clients route by this
+	// field. Server-wide events (heartbeat, list patches, list updates)
+	// leave it empty.
+	ConversationID    string                  `json:"conversation_id,omitempty"`
 	Messages          []APIMessage            `json:"messages,omitempty"`
 	Conversation      *generated.Conversation `json:"conversation,omitempty"`
 	ConversationState *ConversationState      `json:"conversation_state,omitempty"`
@@ -93,6 +104,12 @@ type StreamResponse struct {
 	ToolProgress *llm.ToolProgress `json:"tool_progress,omitempty"`
 	// StreamDelta is set when the LLM streams partial text content.
 	StreamDelta *llm.StreamDelta `json:"stream_delta,omitempty"`
+	// MaxSequenceID, when non-zero, reports the highest message sequence_id
+	// known for this conversation. Set by the REST GET /api/conversation/<id>
+	// handler (computed from the returned message list) so the client can
+	// initialize its known-max cursor. Stream events leave this 0; clients
+	// derive max from delivered messages.
+	MaxSequenceID int64 `json:"max_sequence_id,omitempty"`
 	// SnapshotComplete marks the boundary between the stream's initial
 	// replay and live updates. Sent exactly once per connection,
 	// unconditionally — even when the replay is empty. Clients can use
@@ -273,9 +290,13 @@ type Server struct {
 	notifDispatcher          *notifications.Dispatcher
 	conversationListStream   *conversationListStream
 	conversationListGitCache *conversationListGitCache
-	shutdownCh               chan struct{} // Signals background routines to stop
-	listenPort               int           // TCP port the server is listening on
-	terminals                *TerminalSessions
+	// streamPub is the server-wide subpub that fans out per-conversation
+	// events to every /api/stream2 subscriber. Events are tagged with their
+	// ConversationID so clients can route them.
+	streamPub  *subpub.SubPub[StreamResponse]
+	shutdownCh chan struct{} // Signals background routines to stop
+	listenPort int           // TCP port the server is listening on
+	terminals  *TerminalSessions
 
 	// hooksDir is the directory searched for user hook scripts
 	// (end-of-turn, new-conversation). Defaults to
@@ -303,6 +324,7 @@ func NewServer(database *db.DB, llmManager LLMProvider, toolSetConfig claudetool
 	}
 
 	s.conversationListStream = newConversationListStream(s)
+	s.streamPub = subpub.New[StreamResponse]()
 	s.conversationListGitCache = newConversationListGitCache()
 
 	// Persistent terminal sessions live alongside the database so that they
@@ -350,7 +372,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/conversations", gzipHandler(http.HandlerFunc(s.handleConversations)))
 	mux.Handle("GET /api/conversations/snapshot", gzipHandler(http.HandlerFunc(s.handleConversationsSnapshot)))
 	mux.Handle("GET /api/conversations/search", gzipHandler(http.HandlerFunc(s.handleSearchConversations)))
-	mux.Handle("GET /api/stream", http.HandlerFunc(s.handleStream))
+	mux.Handle("GET /api/stream2", http.HandlerFunc(s.handleStream))
 	mux.Handle("/api/conversations/archived", gzipHandler(http.HandlerFunc(s.handleArchivedConversations)))
 	mux.Handle("/api/conversations/new", http.HandlerFunc(s.handleNewConversation))                         // Small response
 	mux.Handle("/api/conversations/distill-new-generation", http.HandlerFunc(s.handleDistillNewGeneration)) // Small response
@@ -789,7 +811,7 @@ func (s *Server) getOrCreateConversationManager(ctx context.Context, conversatio
 			s.publishConversationState(state)
 		}
 
-		manager := NewConversationManager(conversationID, s.db, s.logger, s.toolSetConfig, recordMessage, onStateChange)
+		manager := NewConversationManager(conversationID, s.db, s.logger, s.toolSetConfig, recordMessage, onStateChange, s.streamPub)
 		manager.userEmail = userEmail
 		// Hydrate runs DB transactions, which fire OnCommit hooks. Those hooks
 		// (e.g. notify on the conversation list patch stream) acquire s.mu, so
@@ -839,7 +861,7 @@ func (s *Server) getOrCreateSubagentConversationManager(ctx context.Context, con
 		subagentConfig := s.toolSetConfig
 		subagentConfig.SubagentDepth = s.toolSetConfig.SubagentDepth + 1
 
-		manager := NewConversationManager(conversationID, s.db, s.logger, subagentConfig, recordMessage, onStateChange)
+		manager := NewConversationManager(conversationID, s.db, s.logger, subagentConfig, recordMessage, onStateChange, s.streamPub)
 		// See getOrCreateConversationManager for why we don't hold s.mu here.
 		if err := manager.Hydrate(ctx); err != nil {
 			return nil, err
@@ -933,13 +955,13 @@ func (s *Server) recordMessage(ctx context.Context, conversationID string, messa
 		s.logger.Warn("Failed to update conversation timestamp", "conversationID", conversationID, "error", err)
 	}
 
-	// Touch active manager activity time if present
+	// Touch active manager activity time if present and bump its max sequence ID.
 	s.mu.Lock()
 	mgr, ok := s.activeConversations[conversationID]
+	s.mu.Unlock()
 	if ok {
 		mgr.Touch()
 	}
-	s.mu.Unlock()
 
 	// Notify subscribers with only the new message - use WithoutCancel because
 	// the HTTP request context may be cancelled after the handler returns, but
@@ -1018,7 +1040,7 @@ func (s *Server) notifySubscribers(ctx context.Context, conversationID string) {
 		Messages:     nil, // No new messages, just conversation update
 		Conversation: &conversation,
 	}
-	manager.subpub.Broadcast(streamData)
+	manager.broadcastStream(streamData)
 
 	// Also notify conversation list subscribers (e.g., slug change)
 	s.publishConversationListUpdate(ConversationListUpdate{
@@ -1069,7 +1091,7 @@ func (s *Server) notifySubscribersNewMessage(ctx context.Context, conversationID
 		// Only agent messages have usage data, so context window updates when they arrive.
 		ContextWindowSize: calculateContextWindowSizeFromMsg(newMsg),
 	}
-	manager.subpub.Publish(newMsg.SequenceID, streamData)
+	manager.publishStream(newMsg.SequenceID, streamData)
 
 	// Also notify conversation list subscribers about the update (updated_at changed)
 	s.publishConversationListUpdate(ConversationListUpdate{
@@ -1107,7 +1129,7 @@ func (s *Server) broadcastMessageUpdate(ctx context.Context, conversationID stri
 		Messages:     apiMessages,
 		Conversation: &conversation,
 	}
-	manager.subpub.Broadcast(streamData)
+	manager.broadcastStream(streamData)
 
 	s.publishConversationListUpdate(ConversationListUpdate{
 		Type:         "update",
@@ -1155,11 +1177,17 @@ func (s *Server) publishConversationListUpdate(update ConversationListUpdate) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Broadcast to all active conversation managers
+	streamData := StreamResponse{ConversationListUpdate: &update}
+	if update.Conversation != nil {
+		streamData.ConversationID = update.Conversation.ConversationID
+	}
+	// /api/stream2 subscribers get a single fan-out via the server-wide stream.
+	if s.streamPub != nil {
+		s.streamPub.Broadcast(streamData)
+	}
+	// Legacy /api/conversation/<id>/stream subscribers (iOS, CLI) still
+	// receive list updates via the per-conversation subpub.
 	for _, manager := range s.activeConversations {
-		streamData := StreamResponse{
-			ConversationListUpdate: &update,
-		}
 		manager.subpub.Broadcast(streamData)
 	}
 }
@@ -1267,12 +1295,17 @@ func (s *Server) publishConversationState(state ConversationState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Broadcast to all active conversation managers
+	streamData := StreamResponse{
+		ConversationID:    state.ConversationID,
+		ConversationState: &state,
+		NotificationEvent: notifEvent,
+	}
+	if s.streamPub != nil {
+		s.streamPub.Broadcast(streamData)
+	}
+	// Legacy /api/conversation/<id>/stream subscribers (iOS, CLI) still
+	// receive state updates via the per-conversation subpub.
 	for _, manager := range s.activeConversations {
-		streamData := StreamResponse{
-			ConversationState: &state,
-			NotificationEvent: notifEvent,
-		}
 		manager.subpub.Broadcast(streamData)
 	}
 }

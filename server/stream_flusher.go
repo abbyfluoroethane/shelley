@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"shelley.exe.dev/llm"
-	"shelley.exe.dev/subpub"
 )
 
 // streamFlusher batches LLM stream deltas and flushes them periodically.
@@ -14,7 +13,7 @@ import (
 // causing subscriber disconnections. Instead, we accumulate deltas and flush
 // the combined text every interval (e.g., 50ms), yielding ~20 updates/second.
 type streamFlusher struct {
-	sp       *subpub.SubPub[StreamResponse]
+	cm       *ConversationManager
 	interval time.Duration
 
 	mu      sync.Mutex
@@ -24,9 +23,9 @@ type streamFlusher struct {
 	running bool
 }
 
-func newStreamFlusher(sp *subpub.SubPub[StreamResponse], interval time.Duration) *streamFlusher {
+func newStreamFlusher(cm *ConversationManager, interval time.Duration) *streamFlusher {
 	return &streamFlusher{
-		sp:       sp,
+		cm:       cm,
 		interval: interval,
 	}
 }
@@ -41,7 +40,7 @@ func (sf *streamFlusher) Push(delta llm.StreamDelta) {
 		sf.index = delta.Index
 	} else {
 		// For non-text deltas (thinking, etc.), broadcast immediately
-		sf.sp.Broadcast(StreamResponse{
+		sf.cm.broadcastStream(StreamResponse{
 			StreamDelta: &delta,
 		})
 		return
@@ -66,7 +65,7 @@ func (sf *streamFlusher) flush() {
 	sf.mu.Unlock()
 
 	if text != "" {
-		sf.sp.Broadcast(StreamResponse{
+		sf.cm.broadcastStream(StreamResponse{
 			StreamDelta: &llm.StreamDelta{
 				Type:  "text",
 				Text:  text,

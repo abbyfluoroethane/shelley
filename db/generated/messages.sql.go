@@ -214,6 +214,40 @@ func (q *Queries) GetLatestMessage(ctx context.Context, conversationID string) (
 	return i, err
 }
 
+const getMaxSequenceIDsForAllConversations = `-- name: GetMaxSequenceIDsForAllConversations :many
+SELECT conversation_id, CAST(COALESCE(MAX(sequence_id), 0) AS INTEGER) AS max_sequence_id
+FROM messages
+GROUP BY conversation_id
+`
+
+type GetMaxSequenceIDsForAllConversationsRow struct {
+	ConversationID string `json:"conversation_id"`
+	MaxSequenceID  int64  `json:"max_sequence_id"`
+}
+
+func (q *Queries) GetMaxSequenceIDsForAllConversations(ctx context.Context) ([]GetMaxSequenceIDsForAllConversationsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getMaxSequenceIDsForAllConversations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetMaxSequenceIDsForAllConversationsRow{}
+	for rows.Next() {
+		var i GetMaxSequenceIDsForAllConversationsRow
+		if err := rows.Scan(&i.ConversationID, &i.MaxSequenceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getMessage = `-- name: GetMessage :one
 SELECT message_id, conversation_id, sequence_id, type, llm_data, user_data, usage_data, created_at, display_data, excluded_from_context, generation FROM messages
 WHERE message_id = ?

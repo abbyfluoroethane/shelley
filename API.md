@@ -25,14 +25,14 @@ capabilities later without reshaping the response.
 The server derives the conversation list from the database and publishes
 RFC-6902 JSON Patch diffs on a single unified SSE stream:
 
-- `GET /api/stream` — unified SSE: per-conversation messages **and**
+- `GET /api/stream2` — unified SSE: per-conversation messages **and**
   conversation-list patches.
 - `GET /api/conversations/snapshot` — seed the patch stream with the
   current list and its content hash.
 - Previews are embedded in each conversation list row (`preview`,
   `preview_updated_at`).
 - `GET /api/conversation/<id>/stream` survives for non-web clients (iOS,
-  CLI, tests) but new clients should use `/api/stream`.
+  CLI, tests) but new clients should use `/api/stream2`.
 
 The patch stream is driven exclusively by `Pool.OnCommit`: every
 successful write transaction triggers a recompute, and a `recomputeMu`
@@ -85,7 +85,7 @@ Unless noted, results exclude **archived** conversations.
 - `GET /api/conversation/<id>` — full message history (compressed).
 - `GET /api/conversation/<id>/stream` — **legacy** SSE: messages, state,
   no list patches. Used by iOS, CLI, and Go tests; new clients should
-  use `/api/stream`. Query params:
+  use `/api/stream2`. Query params:
     - `?last_sequence_id=<n>` — resume from `sequence_id > n`.
     - `?tail=<n>` — first frame contains only the last `n` messages.
   A `{"snapshot_complete": true}` frame follows the initial replay
@@ -99,26 +99,42 @@ Unless noted, results exclude **archived** conversations.
 ### Unified stream
 
 ```
-GET /api/stream?conversation=<id>&conversation_list_hash=<h>&last_sequence_id=<n>
+GET /api/stream2?conversation=<id>&conversation_list_hash=<h>&last_sequence_id=<n>
 ```
 
-SSE stream. All query params are optional:
+SSE stream. A single connection delivers per-conversation events
+(messages, tool progress, stream deltas, conversation/state updates) for
+**all** active conversations on the server, plus the conversation-list
+patch stream. Every per-conversation event carries a top-level
+`conversation_id` field for client-side routing.
 
-- `conversation` — if set, the stream also emits messages, tool
-  progress, and state for that conversation. If omitted, the stream
-  only emits conversation-list patches and heartbeats.
+All query params are optional:
+
+- `conversation` — if set, the first frames replay that conversation's
+  message history before live updates begin. It governs **backfill
+  only**: live events for every conversation flow regardless.
 - `conversation_list_hash` — the `hash` from the most recent snapshot
   or patch event the client successfully applied. The server uses it to
   decide whether to replay history or send a fresh reset event.
-- `last_sequence_id`, `tail` — same semantics as on
-  `/api/conversation/<id>/stream`. A `snapshot_complete` frame
-  separates the initial replay from live updates.
+- `last_sequence_id`, `tail` — refine the `conversation` backfill, with
+  the same semantics as on `/api/conversation/<id>/stream`. A
+  `snapshot_complete` frame separates the initial replay (and an empty
+  replay on connections without `conversation`) from live updates.
 
 Event payload (`data: <json>`):
 
 ```ts
 interface StreamResponse {
-  // Per-conversation (only when ?conversation= is set):
+  // Routing key for per-conversation events. Always set on messages,
+  // conversation, conversation_state, context_window_size, tool_progress,
+  // and stream_delta. Empty for connection-scoped frames
+  // (conversation_list_patch, heartbeat, snapshot_complete) and for
+  // global events that already carry their own conversation reference
+  // (notification_event).
+  conversation_id?: string;
+
+  // Per-conversation event payload. With a single stream serving every
+  // active conversation, clients dispatch based on conversation_id.
   messages?: APIMessage[];
   conversation?: Conversation;
   conversation_state?: { conversation_id, working, model };
@@ -146,7 +162,7 @@ The `conversation_list_patch` operates on a document that is exactly the
 should:
 
 1. `GET /api/conversations/snapshot` once to obtain `(state, hash)`.
-2. Open `/api/stream?conversation_list_hash=<hash>`.
+2. Open `/api/stream2?conversation_list_hash=<hash>`.
 3. For each `conversation_list_patch` event:
    - If `event.old_hash == null` or `event.reset`, replace local state
      with `event.patch[0].value`.

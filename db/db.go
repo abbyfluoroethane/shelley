@@ -992,6 +992,25 @@ func (db *DB) GetSubagentCounts(ctx context.Context) (map[string]int64, error) {
 	return counts, nil
 }
 
+// GetMaxSequenceIDsForAllConversations returns a map of conversation_id -> max sequence_id.
+func (db *DB) GetMaxSequenceIDsForAllConversations(ctx context.Context) (map[string]int64, error) {
+	var rows []generated.GetMaxSequenceIDsForAllConversationsRow
+	err := db.pool.Rx(ctx, func(ctx context.Context, rx *Rx) error {
+		q := generated.New(rx.Conn())
+		var err error
+		rows, err = q.GetMaxSequenceIDsForAllConversations(ctx)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		result[r.ConversationID] = r.MaxSequenceID
+	}
+	return result, nil
+}
+
 // UpdateConversationParent sets the parent_conversation_id for a conversation
 func (db *DB) UpdateConversationParent(ctx context.Context, conversationID, parentID string) (*generated.Conversation, error) {
 	var conversation generated.Conversation

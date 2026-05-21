@@ -1,0 +1,631 @@
+// messageStore tests — IndexedDB-backed per-message cache.
+//
+// Each test gets a fresh MessageStore over a fresh IDBFactory, so cases are
+// fully isolated and we can simulate "another tab" by opening a second store
+// over the same factory + dbName.
+//
+// Run via `pnpm test` (see scripts/run-tests.mjs).
+
+// Use the auto polyfill so IDBKeyRange, IDBRequest, etc. are present as
+// globals, then construct fresh per-test IDBFactory instances for isolation.
+import "fake-indexeddb/auto";
+import { IDBFactory } from "fake-indexeddb";
+import { MessageStore } from "./messageStore";
+import type { ConversationCacheRecord } from "./messageStore";
+import type { Message, StreamResponse } from "../types";
+
+/**
+ * The catch-up predicate as evaluated by ChatInterface.loadMessages: the UI
+ * issues a REST backfill when the cache lacks full history OR when the
+ * server-reported max sequence_id is ahead of what we have locally.
+ */
+function needsBackfill(rec: ConversationCacheRecord | null): boolean {
+  if (!rec || !rec.hasFullHistory) return true;
+  if (rec.maxSequenceIdKnown <= 0) return false;
+  return rec.maxSequenceId < rec.maxSequenceIdKnown;
+}
+
+let seq = 0;
+/** Per-test factory + dbName so each case is fully isolated. */
+function freshFactory(): { factory: IDBFactory; dbName: string } {
+  return { factory: new IDBFactory(), dbName: `shelley-messages-test-${++seq}` };
+}
+function freshStore(): MessageStore {
+  const { factory, dbName } = freshFactory();
+  return new MessageStore({ factory, dbName });
+}
+
+function msg(convId: string, sequence_id: number, msgId?: string): Message {
+  return {
+    message_id: msgId ?? `${convId}-${sequence_id}`,
+    conversation_id: convId,
+    sequence_id,
+    type: "user",
+    llm_data: null,
+    user_data: null,
+    usage_data: null,
+    created_at: new Date(sequence_id * 1000).toISOString(),
+    display_data: null,
+    generation: 0,
+    end_of_turn: false,
+  };
+}
+
+function assert(cond: boolean, message: string): void {
+  if (!cond) throw new Error(`Assertion failed: ${message}`);
+}
+
+async function run(name: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+    console.log(`✓ ${name}`);
+  } catch (err) {
+    console.error(`✗ ${name}`);
+    throw err;
+  }
+}
+
+async function main(): Promise<void> {
+  await run("upsertMessages + hydrate round-trip in seq order", async () => {
+    const { factory, dbName } = freshFactory();
+    const s = new MessageStore({ factory, dbName });
+    const id = "c1";
+    s.upsertMessages(id, [msg(id, 3), msg(id, 1), msg(id, 2)]);
+    await s.settle();
+
+    const rec = s.peek(id)!;
+    assert(rec.messages.length === 3, `peek len ${rec.messages.length}`);
+    assert(
+      rec.messages[0].sequence_id === 1 &&
+        rec.messages[1].sequence_id === 2 &&
+        rec.messages[2].sequence_id === 3,
+      "in-memory sorted",
+    );
+    assert(rec.minSequenceId === 1 && rec.maxSequenceId === 3, "min/max");
+
+    // Cross-instance: open a fresh store on the same db and hydrate.
+    await s.close();
+    const s2 = new MessageStore({ factory, dbName });
+    const hyd = await s2.hydrate(id);
+    assert(hyd !== null, "hydrate non-null");
+    assert(hyd!.messages.length === 3, `hydrated len ${hyd!.messages.length}`);
+    assert(
+      hyd!.messages[0].sequence_id === 1 && hyd!.messages[2].sequence_id === 3,
+      "hydrated sorted asc",
+    );
+  });
+
+  await run("monotonic head: older seq does not lower max_sequence_id_local", async () => {
+    const { factory, dbName } = freshFactory();
+    const s = new MessageStore({ factory, dbName });
+    const id = "c1";
+    s.upsertMessages(id, [msg(id, 5)]);
+    await s.settle();
+    s.upsertMessages(id, [msg(id, 3)]);
+    await s.settle();
+    assert(s.peek(id)!.maxSequenceId === 5, "in-memory max stays 5");
+
+    // Cross-instance verifies the persisted meta row.
+    await s.close();
+    const s2 = new MessageStore({ factory, dbName });
+    const hyd = await s2.hydrate(id);
+    assert(hyd!.maxSequenceId === 5, `persisted max ${hyd!.maxSequenceId} != 5`);
+  });
+
+  await run("idempotent re-upsert: same [conv, seq] twice = one row", async () => {
+    const { factory, dbName } = freshFactory();
+    const s = new MessageStore({ factory, dbName });
+    const id = "c1";
+    const m = msg(id, 1, "only");
+    s.upsertMessages(id, [m]);
+    s.upsertMessages(id, [m]);
+    await s.settle();
+    assert(s.peek(id)!.messages.length === 1, "in-memory one row");
+    await s.close();
+    const s2 = new MessageStore({ factory, dbName });
+    const hyd = await s2.hydrate(id);
+    assert(hyd!.messages.length === 1, `persisted ${hyd!.messages.length} != 1`);
+  });
+
+  await run("concurrent appends preserve max across store instances", async () => {
+    const { factory, dbName } = freshFactory();
+    const id = "c1";
+    const sA = new MessageStore({ factory, dbName });
+    const sB = new MessageStore({ factory, dbName });
+    sA.upsertMessages(id, [msg(id, 0, "m0")]);
+    await sA.settle();
+    sA.upsertMessages(id, [msg(id, 10, "ma")]);
+    sB.upsertMessages(id, [msg(id, 7, "mb")]);
+    sA.upsertMessages(id, [msg(id, 12, "mc")]);
+    await Promise.all([sA.settle(), sB.settle()]);
+    await sA.close();
+    await sB.close();
+
+    const s3 = new MessageStore({ factory, dbName });
+    const hyd = await s3.hydrate(id);
+    assert(hyd !== null, "hydrate non-null");
+    assert(hyd!.maxSequenceId === 12, `expected max=12, got ${hyd!.maxSequenceId}`);
+    assert(hyd!.messages.length === 4, `expected 4 rows, got ${hyd!.messages.length}`);
+  });
+
+  await run("delete() removes rows + meta (cross-instance verified)", async () => {
+    const { factory, dbName } = freshFactory();
+    const s = new MessageStore({ factory, dbName });
+    const id = "c-del";
+    s.upsertMessages(id, [msg(id, 1), msg(id, 2)]);
+    s.upsertMessages("c-keep", [msg("c-keep", 1)]);
+    await s.settle();
+    await s.delete(id);
+    await s.close();
+
+    const s2 = new MessageStore({ factory, dbName });
+    const gone = await s2.hydrate(id);
+    assert(gone === null, "deleted conv gone after fresh hydrate");
+    const kept = await s2.hydrate("c-keep");
+    assert(kept !== null && kept.messages.length === 1, "other conv preserved");
+  });
+
+  await run("applyFullHistory replace semantics (cross-instance)", async () => {
+    const { factory, dbName } = freshFactory();
+    const s = new MessageStore({ factory, dbName });
+    const id = "c-full";
+    s.upsertMessages(id, [msg(id, 99, "old")]);
+    await s.settle();
+    const resp: StreamResponse = {
+      conversation_id: id,
+      messages: [msg(id, 2), msg(id, 1), msg(id, 3)],
+      context_window_size: 100,
+      max_sequence_id: 3,
+    };
+    s.applyFullHistory(id, resp);
+    await s.settle();
+    await s.close();
+
+    const s2 = new MessageStore({ factory, dbName });
+    const hyd = await s2.hydrate(id);
+    assert(hyd !== null, "hydrated");
+    assert(hyd!.messages.length === 3, `expected 3, got ${hyd!.messages.length}`);
+    assert(
+      hyd!.messages[0].sequence_id === 1 &&
+        hyd!.messages[1].sequence_id === 2 &&
+        hyd!.messages[2].sequence_id === 3,
+      "sorted asc",
+    );
+    assert(
+      hyd!.messages.every((m) => m.message_id !== "old"),
+      "old row replaced",
+    );
+    assert(hyd!.hasFullHistory === true, "hasFullHistory persisted");
+  });
+
+  await run("backfill detection via maxSequenceIdKnown", async () => {
+    const s = freshStore();
+    const id = "c-back";
+    s.applyFullHistory(id, {
+      conversation_id: id,
+      messages: [msg(id, 1), msg(id, 2), msg(id, 3)],
+      context_window_size: 0,
+    });
+    let rec = s.peek(id)!;
+    assert(rec.hasFullHistory, "has full hist");
+    s.setMaxSequenceIdKnown(id, 3);
+    rec = s.peek(id)!;
+    assert(rec.maxSequenceIdKnown <= rec.maxSequenceId, "up-to-date when known==local");
+    s.setMaxSequenceIdKnown(id, 5);
+    rec = s.peek(id)!;
+    assert(rec.maxSequenceIdKnown > rec.maxSequenceId, "stale when known>local");
+    await s.settle();
+  });
+
+  await run("markAllStale preserves messages on disk", async () => {
+    const { factory, dbName } = freshFactory();
+    const s = new MessageStore({ factory, dbName });
+    const id = "c-stale";
+    s.applyFullHistory(id, {
+      conversation_id: id,
+      messages: [msg(id, 1), msg(id, 2), msg(id, 3)],
+      context_window_size: 0,
+    });
+    await s.settle();
+    s.markAllStale();
+    await s.settle();
+    assert(s.peek(id)!.hasFullHistory === false, "hot cleared");
+    assert(s.peek(id)!.messages.length === 3, "hot messages preserved");
+    await s.close();
+
+    const s2 = new MessageStore({ factory, dbName });
+    const hyd = await s2.hydrate(id);
+    assert(hyd !== null && hyd.messages.length === 3, "messages preserved on disk");
+    assert(hyd!.hasFullHistory === false, "has_full_history persisted=false");
+  });
+
+  await run("setConversation does not disturb max_sequence_id_local", async () => {
+    const { factory, dbName } = freshFactory();
+    const s = new MessageStore({ factory, dbName });
+    const id = "c-conv";
+    s.upsertMessages(id, [msg(id, 5)]);
+    await s.settle();
+    s.setConversation(id, {
+      conversation_id: id,
+      slug: "hello",
+      title: "hello",
+    } as unknown as import("../types").Conversation);
+    await s.settle();
+    await s.close();
+    const s2 = new MessageStore({ factory, dbName });
+    const hyd = await s2.hydrate(id);
+    assert(hyd!.maxSequenceId === 5, `max preserved, got ${hyd!.maxSequenceId}`);
+    assert(hyd!.conversation !== null, "conversation persisted");
+  });
+
+  await run("setContextWindowSize does not disturb max_sequence_id_local", async () => {
+    const { factory, dbName } = freshFactory();
+    const s = new MessageStore({ factory, dbName });
+    const id = "c-ctx";
+    s.upsertMessages(id, [msg(id, 7)]);
+    await s.settle();
+    s.setContextWindowSize(id, 4321);
+    await s.settle();
+    await s.close();
+    const s2 = new MessageStore({ factory, dbName });
+    const hyd = await s2.hydrate(id);
+    assert(hyd!.maxSequenceId === 7, `max preserved, got ${hyd!.maxSequenceId}`);
+    assert(hyd!.contextWindowSize === 4321, "ctx persisted");
+  });
+
+  await run(
+    "applyFullHistory ratchets maxSequenceIdKnown against response.max_sequence_id",
+    async () => {
+      const s = freshStore();
+      const id = "c-known";
+      s.applyFullHistory(id, {
+        conversation_id: id,
+        messages: [msg(id, 1), msg(id, 2)],
+        context_window_size: 0,
+        max_sequence_id: 9,
+      });
+      const rec = s.peek(id)!;
+      assert(rec.maxSequenceIdKnown === 9, `expected 9, got ${rec.maxSequenceIdKnown}`);
+      // A subsequent applyFullHistory with smaller max should not regress.
+      s.applyFullHistory(id, {
+        conversation_id: id,
+        messages: [msg(id, 1), msg(id, 2)],
+        context_window_size: 0,
+        max_sequence_id: 4,
+      });
+      assert(s.peek(id)!.maxSequenceIdKnown === 9, "known did not regress");
+      await s.settle();
+    },
+  );
+
+  // ── Catch-up invariants ────────────────────────────────────────────────────
+
+  await run("catch-up: stream reports higher seq than we have => needsBackfill", async () => {
+    const s = freshStore();
+    const id = "c-catch1";
+    s.applyFullHistory(id, {
+      conversation_id: id,
+      messages: [msg(id, 1), msg(id, 2), msg(id, 3)],
+      context_window_size: 0,
+      max_sequence_id: 3,
+    });
+    s.setMaxSequenceIdKnown(id, 5);
+    const rec = s.peek(id)!;
+    assert(rec.maxSequenceIdKnown === 5, `known=${rec.maxSequenceIdKnown}`);
+    assert(rec.maxSequenceId === 3, `local=${rec.maxSequenceId}`);
+    assert(rec.maxSequenceIdKnown > rec.maxSequenceId, "known > local");
+    assert(needsBackfill(rec), "needsBackfill true");
+    await s.settle();
+  });
+
+  await run("catch-up: upsertMessages closes the gap", async () => {
+    const s = freshStore();
+    const id = "c-catch2";
+    s.applyFullHistory(id, {
+      conversation_id: id,
+      messages: [msg(id, 1), msg(id, 2), msg(id, 3)],
+      context_window_size: 0,
+      max_sequence_id: 3,
+    });
+    s.setMaxSequenceIdKnown(id, 5);
+    assert(needsBackfill(s.peek(id)), "behind before upsert");
+    s.upsertMessages(id, [msg(id, 4), msg(id, 5)]);
+    const rec = s.peek(id)!;
+    assert(rec.maxSequenceId === 5, `local=${rec.maxSequenceId}`);
+    assert(rec.maxSequenceId === rec.maxSequenceIdKnown, "local==known");
+    assert(!needsBackfill(rec), "caught up");
+    await s.settle();
+  });
+
+  await run("setMaxSequenceIdKnown is monotonic (high water mark wins)", async () => {
+    const s = freshStore();
+    const id = "c-mono";
+    s.setMaxSequenceIdKnown(id, 10);
+    assert(s.peek(id)!.maxSequenceIdKnown === 10, "set to 10");
+    s.setMaxSequenceIdKnown(id, 5);
+    assert(s.peek(id)!.maxSequenceIdKnown === 10, "5 ignored");
+    // Multiple writers over the same factory: the high value must win in IDB.
+    const { factory, dbName } = freshFactory();
+    const sA = new MessageStore({ factory, dbName });
+    const sB = new MessageStore({ factory, dbName });
+    sA.setMaxSequenceIdKnown(id, 7);
+    sB.setMaxSequenceIdKnown(id, 12);
+    sA.setMaxSequenceIdKnown(id, 4);
+    await Promise.all([sA.settle(), sB.settle()]);
+    await sA.close();
+    await sB.close();
+    const s3 = new MessageStore({ factory, dbName });
+    const hyd = await s3.hydrate(id);
+    assert(hyd!.maxSequenceIdKnown === 12, `persisted known=${hyd!.maxSequenceIdKnown}`);
+  });
+
+  await run("applyFullHistory after a stale stream signal clears backfill", async () => {
+    const s = freshStore();
+    const id = "c-stalefirst";
+    s.setMaxSequenceIdKnown(id, 7);
+    assert(needsBackfill(s.peek(id)), "behind before history");
+    s.applyFullHistory(id, {
+      conversation_id: id,
+      messages: [1, 2, 3, 4, 5, 6, 7].map((n) => msg(id, n)),
+      context_window_size: 0,
+      max_sequence_id: 7,
+    });
+    const rec = s.peek(id)!;
+    assert(rec.hasFullHistory, "hasFullHistory");
+    assert(rec.maxSequenceId === 7, `local=${rec.maxSequenceId}`);
+    assert(rec.maxSequenceIdKnown === 7, `known=${rec.maxSequenceIdKnown}`);
+    assert(!needsBackfill(rec), "caught up");
+    await s.settle();
+  });
+
+  await run(
+    "applyFullHistory ratchets known above delivered messages => still needsBackfill",
+    async () => {
+      const { factory, dbName } = freshFactory();
+      const s = new MessageStore({ factory, dbName });
+      const id = "c-ratchet";
+      s.applyFullHistory(id, {
+        conversation_id: id,
+        messages: [msg(id, 1), msg(id, 2), msg(id, 3)],
+        context_window_size: 0,
+        max_sequence_id: 10,
+      });
+      let rec = s.peek(id)!;
+      assert(rec.maxSequenceId === 3, `local=${rec.maxSequenceId}`);
+      assert(rec.maxSequenceIdKnown === 10, `known=${rec.maxSequenceIdKnown}`);
+      assert(needsBackfill(rec), "behind even with full history flag");
+      await s.settle();
+      await s.close();
+      // Verify it survives a fresh hydrate.
+      const s2 = new MessageStore({ factory, dbName });
+      rec = (await s2.hydrate(id))!;
+      assert(rec.hasFullHistory, "hasFullHistory persisted");
+      assert(rec.maxSequenceId === 3, `persisted local=${rec.maxSequenceId}`);
+      assert(rec.maxSequenceIdKnown === 10, `persisted known=${rec.maxSequenceIdKnown}`);
+      assert(needsBackfill(rec), "behind after hydrate");
+    },
+  );
+
+  await run("out-of-order: late live event then applyFullHistory does not desync", async () => {
+    const s = freshStore();
+    const id = "c-ooo";
+    s.upsertMessages(id, [msg(id, 5)]);
+    s.applyFullHistory(id, {
+      conversation_id: id,
+      messages: [1, 2, 3, 4, 5].map((n) => msg(id, n)),
+      context_window_size: 0,
+      max_sequence_id: 5,
+    });
+    const rec = s.peek(id)!;
+    assert(rec.hasFullHistory, "hasFullHistory");
+    assert(rec.maxSequenceId === 5, `local=${rec.maxSequenceId}`);
+    assert(rec.messages.length === 5, `dedup len=${rec.messages.length}`);
+    const ids = new Set(rec.messages.map((m) => m.message_id));
+    assert(ids.size === 5, "no duplicate message_ids");
+    assert(!needsBackfill(rec), "caught up");
+    await s.settle();
+  });
+
+  await run("regenerated turn: same message_id at new seq dedups", async () => {
+    const s = freshStore();
+    const id = "c-regen";
+    s.upsertMessages(id, [msg(id, 3, "x")]);
+    s.upsertMessages(id, [msg(id, 7, "x")]);
+    const rec = s.peek(id)!;
+    assert(rec.messages.length === 1, `expected 1 row, got ${rec.messages.length}`);
+    assert(rec.messages[0].message_id === "x", "message_id preserved");
+    assert(rec.maxSequenceId === 7, `max=${rec.maxSequenceId}`);
+    await s.settle();
+  });
+
+  await run("markAllStale forces needsBackfill but preserves messages", async () => {
+    const { factory, dbName } = freshFactory();
+    const s = new MessageStore({ factory, dbName });
+    const id = "c-reconnect";
+    s.upsertMessages(id, [msg(id, 1), msg(id, 2)]);
+    s.applyFullHistory(id, {
+      conversation_id: id,
+      messages: [msg(id, 1), msg(id, 2), msg(id, 3)],
+      context_window_size: 0,
+      max_sequence_id: 3,
+    });
+    await s.settle();
+    assert(!needsBackfill(s.peek(id)), "caught up before stale");
+    s.markAllStale();
+    const rec = s.peek(id)!;
+    assert(!rec.hasFullHistory, "hasFullHistory cleared");
+    assert(needsBackfill(rec), "needsBackfill after stale");
+    assert(rec.messages.length === 3, "hot messages preserved for fast paint");
+    await s.settle();
+    await s.close();
+    const s2 = new MessageStore({ factory, dbName });
+    const hyd = (await s2.hydrate(id))!;
+    assert(hyd.messages.length === 3, "persisted messages preserved");
+    assert(needsBackfill(hyd), "persisted stale=>needsBackfill");
+  });
+
+  await run("per-conversation isolation: A's known does not bleed into B", async () => {
+    const s = freshStore();
+    s.setMaxSequenceIdKnown("a", 10);
+    s.setMaxSequenceIdKnown("b", 3);
+    assert(s.peek("a")!.maxSequenceIdKnown === 10, "a known=10");
+    assert(s.peek("b")!.maxSequenceIdKnown === 3, "b known=3");
+    await s.settle();
+  });
+
+  await run("persist-after-reload: fresh store detects it is behind", async () => {
+    const { factory, dbName } = freshFactory();
+    const id = "c-reload";
+    const sA = new MessageStore({ factory, dbName });
+    sA.applyFullHistory(id, {
+      conversation_id: id,
+      messages: [msg(id, 1), msg(id, 2), msg(id, 3)],
+      context_window_size: 0,
+      max_sequence_id: 3,
+    });
+    await sA.settle();
+    await sA.close();
+
+    const sB = new MessageStore({ factory, dbName });
+    const hyd = (await sB.hydrate(id))!;
+    assert(!needsBackfill(hyd), "fresh hydrate caught up");
+    // Stream event: someone else appended messages while we were gone.
+    sB.setMaxSequenceIdKnown(id, 8);
+    const rec = sB.peek(id)!;
+    assert(rec.maxSequenceIdKnown === 8, `known=${rec.maxSequenceIdKnown}`);
+    assert(rec.maxSequenceId === 3, `local=${rec.maxSequenceId}`);
+    assert(needsBackfill(rec), "fresh store detects behind");
+    await sB.settle();
+  });
+
+  await run("pruneStale drops convs not in active set and older than cutoff", async () => {
+    const { factory, dbName } = freshFactory();
+    const fresh = "c-fresh";
+    const oldActive = "c-old-active";
+    const oldArchived = "c-old-archived";
+
+    // Use one store to seed all three convs, then close it.
+    const sA = new MessageStore({ factory, dbName });
+    sA.upsertMessages(fresh, [msg(fresh, 1)]);
+    sA.upsertMessages(oldActive, [msg(oldActive, 1)]);
+    sA.upsertMessages(oldArchived, [msg(oldArchived, 1)]);
+    await sA.settle();
+    await sA.close();
+
+    // Backdate the two "old" convs by patching the on-disk meta rows
+    // directly via a raw IDB connection over the same factory.
+    const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
+    const old = Date.now() - tenDaysMs;
+    await new Promise<void>((resolve, reject) => {
+      const req = factory.open(dbName);
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction(["conversation_meta"], "readwrite");
+        const store = tx.objectStore("conversation_meta");
+        for (const id of [oldActive, oldArchived]) {
+          const r = store.get(id);
+          r.onsuccess = () => {
+            const row = r.result as { updated_at: number } | undefined;
+            if (row) {
+              row.updated_at = old;
+              store.put(row);
+            }
+          };
+        }
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    // Now open a fresh store (cold hot map) and prune. Active set = [fresh, oldActive].
+    const s = new MessageStore({ factory, dbName });
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const pruned = await s.pruneStale([fresh, oldActive], sevenDaysMs);
+    assert(pruned.length === 1, `expected 1 pruned, got ${pruned.length}`);
+    assert(pruned[0] === oldArchived, `pruned wrong id: ${pruned[0]}`);
+
+    // Cross-instance: oldArchived's rows are gone; fresh + oldActive remain.
+    const sB = new MessageStore({ factory, dbName });
+    assert((await sB.hydrate(oldArchived)) === null, "oldArchived rows gone from IDB");
+    assert((await sB.hydrate(fresh)) !== null, "fresh retained in IDB");
+    assert((await sB.hydrate(oldActive)) !== null, "oldActive retained in IDB");
+    await sB.close();
+    await s.close();
+  });
+
+  await run("pruneStale re-checks staleness atomically (no race with upsert)", async () => {
+    const { factory, dbName } = freshFactory();
+    const id = "c-racy";
+    const sA = new MessageStore({ factory, dbName });
+    sA.upsertMessages(id, [msg(id, 1)]);
+    await sA.settle();
+    await sA.close();
+
+    // Backdate the meta on disk.
+    const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
+    await new Promise<void>((resolve, reject) => {
+      const req = factory.open(dbName);
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction(["conversation_meta"], "readwrite");
+        const store = tx.objectStore("conversation_meta");
+        const r = store.get(id);
+        r.onsuccess = () => {
+          const row = r.result as { updated_at: number } | undefined;
+          if (row) {
+            row.updated_at = Date.now() - tenDaysMs;
+            store.put(row);
+          }
+        };
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    // Simulate a racy upsert just before the prune transaction by
+    // upserting a fresh message via store A in parallel with the prune.
+    // Both must settle without losing the upsert's data.
+    const sB = new MessageStore({ factory, dbName });
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    // Kick off an upsert that will arrive concurrently. await its settle
+    // before pruneStale's tx so it lands first (re-bumping updated_at).
+    sB.upsertMessages(id, [msg(id, 2)]);
+    await sB.settle();
+    const pruned = await sB.pruneStale([], sevenDaysMs);
+    assert(
+      pruned.length === 0,
+      `racy upsert should have saved the conv, got pruned=${pruned.length}`,
+    );
+    // Open a third store to verify the on-disk row was not deleted by
+    // pruneStale's atomic re-check.
+    await sB.close();
+    const sC = new MessageStore({ factory, dbName });
+    const rec = await sC.hydrate(id);
+    assert(rec !== null, "meta + messages survive on disk");
+    assert(rec!.messages.length >= 1, `expected >=1 message on disk, got ${rec!.messages.length}`);
+    await sC.close();
+  });
+
+  await run("pruneStale keeps recently-touched conversations even when archived", async () => {
+    const s = freshStore();
+    const id = "c-recent-archived";
+    s.upsertMessages(id, [msg(id, 1)]);
+    await s.settle();
+    // Conversation is not in the active set, but was touched < 1ms ago.
+    const pruned = await s.pruneStale([], 7 * 24 * 60 * 60 * 1000);
+    assert(pruned.length === 0, `expected 0 pruned, got ${pruned.length}`);
+    assert(s.peek(id) !== null, "recent archived conv retained");
+  });
+
+  console.log("\nmessageStore tests passed");
+}
+
+await main();

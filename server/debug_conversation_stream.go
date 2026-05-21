@@ -138,7 +138,7 @@ async function loadInitialHistory() {
 function connect() {
   statusEl.textContent = 'connecting';
   statusEl.className = 'badge';
-  const url = '/api/stream' + (hash ? '?conversation_list_hash=' + encodeURIComponent(hash) : '');
+  const url = '/api/stream2' + (hash ? '?conversation_list_hash=' + encodeURIComponent(hash) : '');
   const es = new EventSource(url);
   es.addEventListener('open', () => { statusEl.textContent = 'connected'; });
   es.onmessage = e => {

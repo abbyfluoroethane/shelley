@@ -8,6 +8,11 @@ SELECT COALESCE(MAX(sequence_id), 0) + 1
 FROM messages 
 WHERE conversation_id = ?;
 
+-- name: GetMaxSequenceIDsForAllConversations :many
+SELECT conversation_id, CAST(COALESCE(MAX(sequence_id), 0) AS INTEGER) AS max_sequence_id
+FROM messages
+GROUP BY conversation_id;
+
 -- name: GetMessage :one
 SELECT * FROM messages
 WHERE message_id = ?;

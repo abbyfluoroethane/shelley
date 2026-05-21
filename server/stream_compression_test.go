@@ -185,8 +185,8 @@ func readSSELine(t *testing.T, r io.Reader, timeout time.Duration) (string, erro
 }
 
 // TestStreamCompressionUnifiedEndpoint exercises the same handler on
-// /api/stream (instead of the legacy /api/conversation/<id>/stream path).
-// Both endpoints share runStream, but /api/stream is the one that writes a
+// /api/stream2 (instead of the legacy /api/conversation/<id>/stream path).
+// Both endpoints share runStream, but /api/stream2 is the one that writes a
 // list-patch / heartbeat frame before per-conversation work, so we want
 // independent coverage that compression headers and framing are correct.
 func TestStreamCompressionUnifiedEndpoint(t *testing.T) {
@@ -203,7 +203,7 @@ func TestStreamCompressionUnifiedEndpoint(t *testing.T) {
 	defer hs.Close()
 
 	t.Run("zstd", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", hs.URL+"/api/stream?conversation="+conv.ConversationID, nil)
+		req, _ := http.NewRequest("GET", hs.URL+"/api/stream2?conversation="+conv.ConversationID, nil)
 		req.Header.Set("Accept-Encoding", "zstd, gzip")
 		client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
 		resp, err := client.Do(req)
@@ -229,7 +229,7 @@ func TestStreamCompressionUnifiedEndpoint(t *testing.T) {
 	})
 
 	t.Run("gzip", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", hs.URL+"/api/stream?conversation="+conv.ConversationID, nil)
+		req, _ := http.NewRequest("GET", hs.URL+"/api/stream2?conversation="+conv.ConversationID, nil)
 		req.Header.Set("Accept-Encoding", "gzip")
 		client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
 		resp, err := client.Do(req)
