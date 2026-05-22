@@ -402,30 +402,60 @@ function App() {
     [],
   );
 
+  const globalStreamRef = useRef<{ forceReconnect: () => void } | null>(null);
+
+  // Recover from an unapplicable patch: drop the stale hash so the next
+  // /api/stream2 connection sends a fresh reset, then force a reconnect.
+  const recoverConversationListStream = useCallback(() => {
+    conversationListHashRef.current = null;
+    globalStreamRef.current?.forceReconnect();
+  }, []);
+
   const handleConversationListPatch = useCallback(
     (event: ConversationListPatchEvent) => {
       const currentHash = conversationListHashRef.current;
       if (!event.reset && event.old_hash !== currentHash) {
+        // A patch arrived that doesn't anchor to our current state. This is
+        // not necessarily a bug (e.g. cross-event ordering during reconnect),
+        // but applying it would corrupt local state. Drop the hash and force
+        // a reconnect; the server replies with a fresh reset.
+        console.warn("conversation list patch hash mismatch; recovering via reconnect", {
+          eventOldHash: event.old_hash,
+          currentHash,
+        });
+        recoverConversationListStream();
         return;
       }
-      syncConversations((prev) => {
-        const next = applyConversationListPatch(prev, event.patch);
-        const nextIds = new Set(next.map((conv) => conv.conversation_id));
-        for (const conv of prev) {
-          if (!nextIds.has(conv.conversation_id)) {
-            void messageStore.delete(conv.conversation_id);
-          }
+      // Apply the patch OUTSIDE the React state updater so any error throws
+      // synchronously here (where our try/catch can see it) rather than
+      // during React's commit phase (where it crashes the renderer).
+      const prev = conversationsRef.current;
+      let next: ConversationWithState[];
+      try {
+        next = applyConversationListPatch(prev, event.patch);
+      } catch (err) {
+        console.error("failed to apply conversation list patch; recovering via reconnect", err, {
+          patch: event.patch,
+          prevLen: prev.length,
+        });
+        recoverConversationListStream();
+        return;
+      }
+      const nextIds = new Set(next.map((conv) => conv.conversation_id));
+      for (const conv of prev) {
+        if (!nextIds.has(conv.conversation_id)) {
+          void messageStore.delete(conv.conversation_id);
         }
-        // Propagate server-reported max_sequence_id for all conversations in
-        // the updated list so ChatInterface can skip unnecessary backfills.
-        for (const conv of next) {
-          messageStore.setMaxSequenceIdKnown(conv.conversation_id, conv.max_sequence_id);
-        }
-        return next;
-      });
+      }
+      // Propagate server-reported max_sequence_id for all conversations in
+      // the updated list so ChatInterface can skip unnecessary backfills.
+      for (const conv of next) {
+        messageStore.setMaxSequenceIdKnown(conv.conversation_id, conv.max_sequence_id);
+      }
+      syncConversations(() => next);
       conversationListHashRef.current = event.new_hash;
     },
-    [syncConversations],
+    [syncConversations, recoverConversationListStream],
   );
 
   // Open the single long-lived /api/stream2 connection. The server delivers
@@ -446,7 +476,11 @@ function App() {
         setReconnectNonce((n) => n + 1);
       },
     });
-    return () => stream.close();
+    globalStreamRef.current = stream;
+    return () => {
+      globalStreamRef.current = null;
+      stream.close();
+    };
   }, [handleConversationListPatch]);
 
   // Update page title and URL when conversation changes
@@ -658,8 +692,10 @@ function App() {
   ) => {
     try {
       await api.distillNewGeneration(sourceConversationId, model, cwd);
-      const updatedConvs = await api.getConversations();
-      setConversations(updatedConvs);
+      // Don't bypass the patch stream here. Setting `conversations` directly
+      // without updating `conversationListHashRef` would desync future patch
+      // events; the stream will deliver the new generation as a regular patch
+      // moments after the API call returns.
       setCurrentConversationId(sourceConversationId);
     } catch (err) {
       console.error("Failed to distill into new generation:", err);

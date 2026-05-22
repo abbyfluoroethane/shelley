@@ -21,7 +21,7 @@ function getAt(doc: unknown, path: string): unknown {
     if (Array.isArray(cur)) {
       const idx = Number(part);
       if (!Number.isInteger(idx) || idx < 0 || idx >= cur.length) {
-        throw new Error(`bad array index in patch path: ${path}`);
+        throw new Error(`bad array index in patch path: ${path} (len=${cur.length})`);
       }
       cur = cur[idx];
     } else if (cur !== null && typeof cur === "object") {
@@ -56,10 +56,10 @@ function setAt(doc: unknown, path: string, value: unknown, mustExist: boolean): 
   if (Array.isArray(parent)) {
     const idx = Number(key);
     if (!Number.isInteger(idx) || idx < 0 || idx > parent.length) {
-      throw new Error(`bad array index in patch path: ${path}`);
+      throw new Error(`bad array index in patch path: ${path} (len=${parent.length})`);
     }
     if (mustExist && idx >= parent.length) {
-      throw new Error(`array index out of range in patch path: ${path}`);
+      throw new Error(`array index out of range in patch path: ${path} (len=${parent.length})`);
     }
     if (idx === parent.length) {
       parent.push(nextValue);
@@ -87,7 +87,7 @@ function removeAt(doc: unknown, path: string): unknown {
   if (Array.isArray(parent)) {
     const idx = Number(key);
     if (!Number.isInteger(idx) || idx < 0 || idx >= parent.length) {
-      throw new Error(`bad array index in patch path: ${path}`);
+      throw new Error(`bad array index in patch path: ${path} (len=${parent.length})`);
     }
     parent.splice(idx, 1);
     return doc;

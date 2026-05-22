@@ -72,4 +72,95 @@ run("json pointer escaping", () => {
   assert(state[0].git_subject === "slash / tilde ~ ok", "expected escaped path support");
 });
 
+run("throws on add past array end", () => {
+  let threw = false;
+  try {
+    applyConversationListPatch([], [{ op: "add", path: "/5", value: conv("a", "a") }]);
+  } catch (err) {
+    threw = true;
+    assert(err instanceof Error && /bad array index/.test(err.message), `unexpected error: ${err}`);
+    assert(
+      err instanceof Error && /len=/.test(err.message),
+      "expected error message to include array length context",
+    );
+  }
+  assert(threw, "expected applyConversationListPatch to throw");
+});
+
+run("throws on replace at missing index", () => {
+  let threw = false;
+  try {
+    applyConversationListPatch(
+      [conv("a", "a")],
+      [{ op: "replace", path: "/5", value: conv("b", "b") }],
+    );
+  } catch (err) {
+    threw = true;
+    assert(
+      err instanceof Error && /(out of range|bad array index)/.test(err.message),
+      `unexpected error: ${err}`,
+    );
+  }
+  assert(threw, "expected applyConversationListPatch to throw");
+});
+
+run("throws on remove at missing index", () => {
+  let threw = false;
+  try {
+    applyConversationListPatch([], [{ op: "remove", path: "/0" }]);
+  } catch (err) {
+    threw = true;
+    assert(err instanceof Error && /bad array index/.test(err.message), `unexpected error: ${err}`);
+  }
+  assert(threw, "expected applyConversationListPatch to throw");
+});
+
+run("does not mutate the input list", () => {
+  const original = [conv("a", "alpha"), conv("b", "beta")];
+  const snapshot = JSON.stringify(original);
+  const next = applyConversationListPatch(original, [
+    { op: "replace", path: "/0/working", value: true },
+    { op: "remove", path: "/1" },
+  ]);
+  assert(JSON.stringify(original) === snapshot, "expected input list to be untouched");
+  assert(next.length === 1 && next[0].working === true, "expected new list to reflect patch");
+});
+
+run("add, move, replace, remove stress sequence", () => {
+  // Deterministic LCG so this isn't flaky and we can extend it later.
+  let s = 0x12345;
+  const rand = () => {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    return s;
+  };
+  let state: ConversationWithState[] = [];
+  let nextId = 0;
+  const id = () => `id-${nextId++}`;
+  for (let step = 0; step < 500; step++) {
+    const op = rand() % 4;
+    if (op === 0 || state.length === 0) {
+      const at = state.length === 0 ? 0 : rand() % (state.length + 1);
+      state = applyConversationListPatch(state, [
+        { op: "add", path: `/${at}`, value: conv(id(), "x") },
+      ]);
+    } else if (op === 1) {
+      const at = rand() % state.length;
+      state = applyConversationListPatch(state, [{ op: "remove", path: `/${at}` }]);
+    } else if (op === 2) {
+      const at = rand() % state.length;
+      state = applyConversationListPatch(state, [
+        { op: "replace", path: `/${at}/working`, value: state[at].working ? false : true },
+      ]);
+    } else {
+      if (state.length < 2) continue;
+      const from = rand() % state.length;
+      let to = rand() % state.length;
+      if (to === from) to = (to + 1) % state.length;
+      state = applyConversationListPatch(state, [{ op: "move", from: `/${from}`, path: `/${to}` }]);
+    }
+  }
+  // Reach the end without throwing.
+  assert(Array.isArray(state), "expected final state to be an array");
+});
+
 console.log("\nConversationListStream tests passed");
