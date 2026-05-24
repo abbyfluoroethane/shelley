@@ -718,6 +718,11 @@ function App() {
       poolOptions={diffsPoolOptions}
       highlighterOptions={diffsHighlighterOptions}
     >
+      {window.__SHELLEY_INIT__?.banner && (
+        <div className="top-banner" title={window.__SHELLEY_INIT__.banner}>
+          {window.__SHELLEY_INIT__.banner}
+        </div>
+      )}
       <div className="app-container">
         <ConversationDrawer
           isOpen={drawerOpen}

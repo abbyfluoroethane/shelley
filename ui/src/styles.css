@@ -21,6 +21,15 @@ body {
   background: var(--bg-secondary);
 }
 
+/* #root hosts the React tree. Make it a flex column so the top banner
+   (when present) can sit at the top and push the app-container down. */
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
 /* CSS Variables */
 :root {
   --font-sans:
@@ -96,8 +105,8 @@ body {
 /* Layout */
 .app-container {
   display: flex;
-  height: 100vh; /* Fallback for older browsers */
-  height: 100dvh; /* Dynamic viewport height - adjusts when mobile browser chrome appears/hides */
+  flex: 1;
+  min-height: 0;
   background: var(--bg-secondary);
   position: relative;
   overflow: hidden;
@@ -435,6 +444,25 @@ button {
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0; /* Never shrink the actions */
+}
+
+/* Top-of-page banner. A full-width bar pinned to the very top of the
+   viewport; the rest of the app sits below it (see #root flex column).
+   Pairs with the `banner` field in init data. */
+.top-banner {
+  flex: 0 0 auto;
+  background: #b45309; /* amber-700 */
+  color: #fff;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 0.35rem 0.75rem;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Drawer/Sidebar */
@@ -3350,6 +3378,9 @@ svg {
   .drawer {
     position: static;
     transform: translateX(0) !important;
+    /* When static, fill the flex parent rather than the full viewport, so
+       the drawer doesn't overflow when a top banner is present. */
+    height: 100%;
   }
 
   .drawer.collapsed {

@@ -10,6 +10,7 @@ Use --db to point at a different database (e.g. the main Shelley db for real dat
 Usage:
     shelley/demo.py              # build + (re)start (empty demo db)
     shelley/demo.py --db ~/.config/shelley/shelley.db   # use main db
+    shelley/demo.py --banner "new feature X"            # show a banner at top of UI
     shelley/demo.py stop         # kill the tmux session
     shelley/demo.py status       # show whether it's running + URL
     shelley/demo.py port         # just print the port
@@ -66,7 +67,7 @@ def health_check(port: int, timeout: float = 5.0) -> bool:
     return False
 
 
-def cmd_start(port: int, custom_db: Path | None = None):
+def cmd_start(port: int, custom_db: Path | None = None, banner: str | None = None):
     sess = session_name(port)
     binary = SHELLEY_DIR / "bin" / "shelley"
     db = custom_db or db_path(port)
@@ -87,6 +88,10 @@ def cmd_start(port: int, custom_db: Path | None = None):
     # demo instances around we'd otherwise exhaust the 10 fallback slots
     # under ~/.config/shelley/ and the server would refuse to start.
     cmd = f"{binary} --config {CONFIG} --db {db} serve --port {port} --socket none"
+    if banner:
+        # Shell-quote via shlex to handle spaces/punctuation in the banner text.
+        import shlex
+        cmd += f" --banner {shlex.quote(banner)}"
     print(f"Starting demo server on port {port} (tmux session '{sess}') ...")
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", sess, "bash", "-c", cmd],
@@ -122,8 +127,9 @@ def cmd_status(port: int):
 
 
 def parse_args():
-    """Parse --db flag and positional action from argv."""
+    """Parse --db / --banner flags and positional action from argv."""
     custom_db = None
+    banner = None
     action = "start"
     args = sys.argv[1:]
     i = 0
@@ -131,21 +137,24 @@ def parse_args():
         if args[i] == "--db" and i + 1 < len(args):
             custom_db = Path(args[i + 1])
             i += 2
+        elif args[i] == "--banner" and i + 1 < len(args):
+            banner = args[i + 1]
+            i += 2
         elif not args[i].startswith("-"):
             action = args[i]
             i += 1
         else:
             print(f"Unknown flag: {args[i]}", file=sys.stderr)
             sys.exit(1)
-    return action, custom_db
+    return action, custom_db, banner
 
 
 def main():
     port = port_for_dir()
-    action, custom_db = parse_args()
+    action, custom_db, banner = parse_args()
 
     actions = {
-        "start": lambda: cmd_start(port, custom_db),
+        "start": lambda: cmd_start(port, custom_db, banner),
         "stop": lambda: cmd_stop(port),
         "status": lambda: cmd_status(port),
         "port": lambda: print(port),

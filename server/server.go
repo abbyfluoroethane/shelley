@@ -298,6 +298,11 @@ type Server struct {
 	listenPort int           // TCP port the server is listening on
 	terminals  *TerminalSessions
 
+	// Banner, when non-empty, is shown in a full-width bar at the top of
+	// the UI. Useful for marking demo instances so they're not confused
+	// with the primary Shelley. Set by `serve --banner`.
+	Banner string
+
 	// hooksDir is the directory searched for user hook scripts
 	// (end-of-turn, new-conversation). Defaults to
 	// $HOME/.config/shelley/hooks; tests override it to a per-test

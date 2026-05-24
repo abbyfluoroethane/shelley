@@ -725,6 +725,9 @@ func (s *Server) serveIndexWithInit(w http.ResponseWriter, r *http.Request, fs h
 	// Inject notification channel type metadata for the settings modal
 	initData["notification_channel_types"] = s.getNotificationChannelTypes()
 	initData["cli_agents"] = detectCLIAgents()
+	if s.Banner != "" {
+		initData["banner"] = s.Banner
+	}
 
 	initJSON, err := json.Marshal(initData)
 	if err != nil {
