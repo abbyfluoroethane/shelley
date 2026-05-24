@@ -133,6 +133,12 @@ export const zhTW: TranslationKeys = {
   apiKey: "API 金鑰",
   enterApiKey: "輸入 API 金鑰",
   maxContextTokens: "最大上下文權杖數",
+  imageSupport: "Image input support",
+  imageSupportHelp:
+    "Auto consults models.dev/api.json. Choose Supported or Not supported to override.",
+  imageSupportAuto: "Auto (from models.dev)",
+  imageSupportYes: "Supported",
+  imageSupportNo: "Not supported",
   tags: "標籤",
   tagsPlaceholder: "逗號分隔，例如：slug, cheap",
   tagsTooltip:

@@ -133,6 +133,12 @@ export const en: TranslationKeys = {
   apiKey: "API Key",
   enterApiKey: "Enter API key",
   maxContextTokens: "Max Context Tokens",
+  imageSupport: "Image input support",
+  imageSupportHelp:
+    "Auto consults models.dev/api.json for the model's modalities. Choose Supported or Not supported to override (e.g., for models not in models.dev). When images are not supported, the read_image tool is hidden from this model.",
+  imageSupportAuto: "Auto (from models.dev)",
+  imageSupportYes: "Supported",
+  imageSupportNo: "Not supported",
   tags: "Tags",
   tagsPlaceholder: "comma-separated, e.g., slug, cheap",
   tagsTooltip:

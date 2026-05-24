@@ -134,6 +134,12 @@ export const fr: TranslationKeys = {
   apiKey: "Clé API",
   enterApiKey: "Saisir la clé API",
   maxContextTokens: "Nombre maximum de tokens de contexte",
+  imageSupport: "Image input support",
+  imageSupportHelp:
+    "Auto consults models.dev/api.json. Choose Supported or Not supported to override.",
+  imageSupportAuto: "Auto (from models.dev)",
+  imageSupportYes: "Supported",
+  imageSupportNo: "Not supported",
   tags: "Étiquettes",
   tagsPlaceholder: "séparées par des virgules, ex : slug, cheap",
   tagsTooltip:

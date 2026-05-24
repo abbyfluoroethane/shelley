@@ -78,6 +78,11 @@ func ClaudeModelName(userName string) string {
 
 func (s *Service) Provider() string { return "anthropic" }
 
+// SupportsImages reports whether this service accepts image inputs.
+// Anthropic models support images by default; set SupportsImages=false to opt out
+// (e.g. for a custom endpoint that proxies a text-only model).
+func (s *Service) SupportsImages() bool { return s.SupportsImages_ }
+
 // TokenContextWindow returns the maximum token context window size for this service
 func (s *Service) TokenContextWindow() int {
 	return 200000
@@ -117,13 +122,14 @@ func (s *Service) MaxImageBytes() int {
 // Service provides Claude completions.
 // Fields should not be altered concurrently with calling any method on Service.
 type Service struct {
-	HTTPC         *http.Client      // defaults to http.DefaultClient if nil
-	URL           string            // defaults to DefaultURL if empty
-	APIKey        string            // must be non-empty
-	Model         string            // defaults to DefaultModel if empty
-	MaxTokens     int               // 0 means use model-specific limit from modelMaxOutputTokens
-	ThinkingLevel llm.ThinkingLevel // thinking level (ThinkingLevelOff disables, default is ThinkingLevelMedium)
-	Backoff       []time.Duration   // retry backoff durations; defaults to {15s, 30s, 60s} if nil
+	HTTPC           *http.Client      // defaults to http.DefaultClient if nil
+	URL             string            // defaults to DefaultURL if empty
+	APIKey          string            // must be non-empty
+	Model           string            // defaults to DefaultModel if empty
+	MaxTokens       int               // 0 means use model-specific limit from modelMaxOutputTokens
+	ThinkingLevel   llm.ThinkingLevel // thinking level (ThinkingLevelOff disables, default is ThinkingLevelMedium)
+	Backoff         []time.Duration   // retry backoff durations; defaults to {15s, 30s, 60s} if nil
+	SupportsImages_ bool              // whether this service accepts image inputs
 }
 
 var _ llm.Service = (*Service)(nil)

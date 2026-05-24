@@ -52,6 +52,10 @@ func NewPredictableService() *PredictableService {
 
 func (s *PredictableService) Provider() string { return "builtin" }
 
+// SupportsImages reports that the predictable service accepts image inputs
+// (it returns image dimensions in its synthetic responses).
+func (s *PredictableService) SupportsImages() bool { return true }
+
 // TokenContextWindow returns the maximum token context window size
 func (s *PredictableService) TokenContextWindow() int {
 	return s.tokenContextWindow

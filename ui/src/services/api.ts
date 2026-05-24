@@ -601,6 +601,7 @@ export interface CustomModel {
   max_tokens: number;
   tags: string; // Comma-separated tags (e.g., "slug" for slug generation)
   reasoning_effort: string; // Free-form reasoning.effort for OpenAI Responses API
+  image_support: "auto" | "yes" | "no";
 }
 
 export interface CreateCustomModelRequest {
@@ -612,6 +613,7 @@ export interface CreateCustomModelRequest {
   max_tokens: number;
   tags: string; // Comma-separated tags
   reasoning_effort: string; // Free-form reasoning.effort for OpenAI Responses API
+  image_support: "auto" | "yes" | "no";
 }
 
 export interface TestCustomModelRequest {

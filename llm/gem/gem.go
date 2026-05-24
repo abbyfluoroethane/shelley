@@ -36,6 +36,10 @@ type Service struct {
 	// so custom-model configurations can pass provider-specific values through
 	// without Shelley needing to know them.
 	ReasoningEffort string
+
+	// SupportsImages_ controls whether this service advertises image-input support.
+	// Default false (supports images).
+	SupportsImages_ bool
 }
 
 var _ llm.Service = (*Service)(nil)
@@ -544,6 +548,10 @@ func calculateUsage(req *gemini.Request, res *gemini.Response) llm.Usage {
 }
 
 func (s *Service) Provider() string { return "gemini" }
+
+// SupportsImages reports whether this service accepts image inputs.
+// Gemini models support images by default; set SupportsImages_=false to opt out.
+func (s *Service) SupportsImages() bool { return s.SupportsImages_ }
 
 // TokenContextWindow returns the maximum token context window size for this service
 func (s *Service) TokenContextWindow() int {

@@ -133,6 +133,12 @@ export const ru: TranslationKeys = {
   apiKey: "API-ключ",
   enterApiKey: "Введите API-ключ",
   maxContextTokens: "Макс. токенов контекста",
+  imageSupport: "Image input support",
+  imageSupportHelp:
+    "Auto consults models.dev/api.json. Choose Supported or Not supported to override.",
+  imageSupportAuto: "Auto (from models.dev)",
+  imageSupportYes: "Supported",
+  imageSupportNo: "Not supported",
   tags: "Теги",
   tagsPlaceholder: "через запятую, напр., slug, cheap",
   tagsTooltip:

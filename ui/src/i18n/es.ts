@@ -133,6 +133,12 @@ export const es: TranslationKeys = {
   apiKey: "Clave de API",
   enterApiKey: "Ingrese la clave de API",
   maxContextTokens: "Tokens de contexto máximos",
+  imageSupport: "Image input support",
+  imageSupportHelp:
+    "Auto consults models.dev/api.json. Choose Supported or Not supported to override.",
+  imageSupportAuto: "Auto (from models.dev)",
+  imageSupportYes: "Supported",
+  imageSupportNo: "Not supported",
   tags: "Etiquetas",
   tagsPlaceholder: "separadas por comas, ej., slug, cheap",
   tagsTooltip:

@@ -1005,6 +1005,7 @@ func (cm *ConversationManager) createOrchestratorSystemPrompt(ctx context.Contex
 		ParentConversationID: cm.conversationID,
 		EnableBrowser:        cm.toolSetConfig.EnableBrowser,
 		BuildAvailableModels: cm.toolSetConfig.BuildAvailableModels,
+		ModelID:              cm.toolSetConfig.ModelID,
 		CLIAgent:             cm.conversationOptions.SubagentBackend,
 		ToolOverrides:        cm.conversationOptions.ToolOverrides,
 		DisableAllTools:      cm.conversationOptions.DisableAllTools,

@@ -71,6 +71,7 @@ interface FormData {
   max_tokens: number;
   tags: string; // Comma-separated tags
   reasoning_effort: string; // Free-form reasoning.effort for OpenAI Responses API
+  image_support: "auto" | "yes" | "no";
 }
 
 const emptyForm: FormData = {
@@ -83,6 +84,7 @@ const emptyForm: FormData = {
   max_tokens: 200000,
   tags: "",
   reasoning_effort: "",
+  image_support: "auto",
 };
 
 // Common reasoning.effort values for the OpenAI Responses API. Free-form so
@@ -203,6 +205,7 @@ function ModelsModal({ isOpen, onClose, onModelsChanged }: ModelsModalProps) {
         max_tokens: form.max_tokens,
         tags: form.tags,
         reasoning_effort: form.reasoning_effort,
+        image_support: form.image_support,
       };
 
       if (editingModelId) {
@@ -234,6 +237,7 @@ function ModelsModal({ isOpen, onClose, onModelsChanged }: ModelsModalProps) {
       max_tokens: model.max_tokens,
       tags: model.tags,
       reasoning_effort: model.reasoning_effort || "",
+      image_support: model.image_support ?? "auto",
     });
     setShowForm(true);
     setTestResult(null);
@@ -432,6 +436,26 @@ function ModelsModal({ isOpen, onClose, onModelsChanged }: ModelsModalProps) {
                 }
                 className="form-input"
               />
+            </div>
+
+            {/* Image input support */}
+            <div className="form-group">
+              <label>{t("imageSupport")}</label>
+              <select
+                value={form.image_support}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    image_support: e.target.value as "auto" | "yes" | "no",
+                  }))
+                }
+                className="form-input"
+              >
+                <option value="auto">{t("imageSupportAuto")}</option>
+                <option value="yes">{t("imageSupportYes")}</option>
+                <option value="no">{t("imageSupportNo")}</option>
+              </select>
+              <div className="form-hint">{t("imageSupportHelp")}</div>
             </div>
 
             {/* Reasoning Effort (OpenAI Responses API only) */}

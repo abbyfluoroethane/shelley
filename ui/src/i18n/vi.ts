@@ -133,6 +133,12 @@ export const vi: TranslationKeys = {
   apiKey: "API Key",
   enterApiKey: "Nhập API key",
   maxContextTokens: "Cửa sổ ngữ cảnh tối đa",
+  imageSupport: "Image input support",
+  imageSupportHelp:
+    "Auto consults models.dev/api.json. Choose Supported or Not supported to override.",
+  imageSupportAuto: "Auto (from models.dev)",
+  imageSupportYes: "Supported",
+  imageSupportNo: "Not supported",
   tags: "Tags",
   tagsPlaceholder: "phân cách bằng dấu phẩy, ví dụ slug, rẻ",
   tagsTooltip:

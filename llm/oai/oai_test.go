@@ -173,8 +173,16 @@ func TestTokenContextWindow(t *testing.T) {
 			expected: 128000, // Qwen/Qwen3-235B-A22B-fp8-tput is not in the special cases, so it defaults to 128k
 		},
 		{
-			name:     "Default model for unknown",
-			model:    Model{ModelName: "unknown-model"},
+			name: "Default model for unknown",
+			model: Model{
+				UserName:           "",
+				ModelName:          "unknown-model",
+				URL:                "",
+				APIKeyEnv:          "",
+				IsReasoningModel:   false,
+				UseSimplifiedPatch: false,
+				SupportsImages:     false,
+			},
 			expected: 128000,
 		},
 	}
@@ -222,8 +230,16 @@ func TestUseSimplifiedPatch(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "Model with UseSimplifiedPatch=true",
-			model:    Model{UseSimplifiedPatch: true},
+			name: "Model with UseSimplifiedPatch=true",
+			model: Model{
+				UserName:           "",
+				ModelName:          "",
+				URL:                "",
+				APIKeyEnv:          "",
+				IsReasoningModel:   false,
+				UseSimplifiedPatch: true,
+				SupportsImages:     false,
+			},
 			expected: true,
 		},
 	}
@@ -266,7 +282,15 @@ func TestConfigDetails(t *testing.T) {
 }
 
 func TestOAIResponsesServiceUseSimplifiedPatch(t *testing.T) {
-	model := Model{UseSimplifiedPatch: true}
+	model := Model{
+		UserName:           "",
+		ModelName:          "",
+		URL:                "",
+		APIKeyEnv:          "",
+		IsReasoningModel:   false,
+		UseSimplifiedPatch: true,
+		SupportsImages:     false,
+	}
 	service := &ResponsesService{Model: model}
 
 	result := service.UseSimplifiedPatch()
@@ -1424,13 +1448,29 @@ func TestTokenContextWindowAdditionalCases(t *testing.T) {
 			expected: 272000,
 		},
 		{
-			name:     "GPT-5.5 dated model",
-			model:    Model{ModelName: "gpt-5.5-2026-04-23"},
+			name: "GPT-5.5 dated model",
+			model: Model{
+				UserName:           "",
+				ModelName:          "gpt-5.5-2026-04-23",
+				URL:                "",
+				APIKeyEnv:          "",
+				IsReasoningModel:   false,
+				UseSimplifiedPatch: false,
+				SupportsImages:     false,
+			},
 			expected: 272000,
 		},
 		{
-			name:     "GPT-5.5 Pro dated model",
-			model:    Model{ModelName: "gpt-5.5-pro-2026-04-23"},
+			name: "GPT-5.5 Pro dated model",
+			model: Model{
+				UserName:           "",
+				ModelName:          "gpt-5.5-pro-2026-04-23",
+				URL:                "",
+				APIKeyEnv:          "",
+				IsReasoningModel:   false,
+				UseSimplifiedPatch: false,
+				SupportsImages:     false,
+			},
 			expected: 272000,
 		},
 		{
@@ -1444,8 +1484,16 @@ func TestTokenContextWindowAdditionalCases(t *testing.T) {
 			expected: 256000,
 		},
 		{
-			name:     "Unknown model defaults to 128k",
-			model:    Model{ModelName: "unknown-model-name"},
+			name: "Unknown model defaults to 128k",
+			model: Model{
+				UserName:           "",
+				ModelName:          "unknown-model-name",
+				URL:                "",
+				APIKeyEnv:          "",
+				IsReasoningModel:   false,
+				UseSimplifiedPatch: false,
+				SupportsImages:     false,
+			},
 			expected: 128000,
 		},
 	}

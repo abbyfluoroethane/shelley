@@ -10,9 +10,9 @@ import (
 )
 
 const createModel = `-- name: CreateModel :one
-INSERT INTO models (model_id, display_name, provider_type, endpoint, api_key, model_name, max_tokens, tags, reasoning_effort)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING model_id, display_name, provider_type, endpoint, api_key, model_name, max_tokens, tags, created_at, updated_at, reasoning_effort
+INSERT INTO models (model_id, display_name, provider_type, endpoint, api_key, model_name, max_tokens, tags, reasoning_effort, image_support)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING model_id, display_name, provider_type, endpoint, api_key, model_name, max_tokens, tags, created_at, updated_at, reasoning_effort, image_support
 `
 
 type CreateModelParams struct {
@@ -25,6 +25,7 @@ type CreateModelParams struct {
 	MaxTokens       int64  `json:"max_tokens"`
 	Tags            string `json:"tags"`
 	ReasoningEffort string `json:"reasoning_effort"`
+	ImageSupport    string `json:"image_support"`
 }
 
 func (q *Queries) CreateModel(ctx context.Context, arg CreateModelParams) (Model, error) {
@@ -38,6 +39,7 @@ func (q *Queries) CreateModel(ctx context.Context, arg CreateModelParams) (Model
 		arg.MaxTokens,
 		arg.Tags,
 		arg.ReasoningEffort,
+		arg.ImageSupport,
 	)
 	var i Model
 	err := row.Scan(
@@ -52,6 +54,7 @@ func (q *Queries) CreateModel(ctx context.Context, arg CreateModelParams) (Model
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReasoningEffort,
+		&i.ImageSupport,
 	)
 	return i, err
 }
@@ -66,7 +69,7 @@ func (q *Queries) DeleteModel(ctx context.Context, modelID string) error {
 }
 
 const getModel = `-- name: GetModel :one
-SELECT model_id, display_name, provider_type, endpoint, api_key, model_name, max_tokens, tags, created_at, updated_at, reasoning_effort FROM models WHERE model_id = ?
+SELECT model_id, display_name, provider_type, endpoint, api_key, model_name, max_tokens, tags, created_at, updated_at, reasoning_effort, image_support FROM models WHERE model_id = ?
 `
 
 func (q *Queries) GetModel(ctx context.Context, modelID string) (Model, error) {
@@ -84,12 +87,13 @@ func (q *Queries) GetModel(ctx context.Context, modelID string) (Model, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReasoningEffort,
+		&i.ImageSupport,
 	)
 	return i, err
 }
 
 const getModels = `-- name: GetModels :many
-SELECT model_id, display_name, provider_type, endpoint, api_key, model_name, max_tokens, tags, created_at, updated_at, reasoning_effort FROM models ORDER BY created_at ASC
+SELECT model_id, display_name, provider_type, endpoint, api_key, model_name, max_tokens, tags, created_at, updated_at, reasoning_effort, image_support FROM models ORDER BY created_at ASC
 `
 
 func (q *Queries) GetModels(ctx context.Context) ([]Model, error) {
@@ -113,6 +117,7 @@ func (q *Queries) GetModels(ctx context.Context) ([]Model, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ReasoningEffort,
+			&i.ImageSupport,
 		); err != nil {
 			return nil, err
 		}
@@ -137,9 +142,10 @@ SET display_name = ?,
     max_tokens = ?,
     tags = ?,
     reasoning_effort = ?,
+    image_support = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE model_id = ?
-RETURNING model_id, display_name, provider_type, endpoint, api_key, model_name, max_tokens, tags, created_at, updated_at, reasoning_effort
+RETURNING model_id, display_name, provider_type, endpoint, api_key, model_name, max_tokens, tags, created_at, updated_at, reasoning_effort, image_support
 `
 
 type UpdateModelParams struct {
@@ -151,6 +157,7 @@ type UpdateModelParams struct {
 	MaxTokens       int64  `json:"max_tokens"`
 	Tags            string `json:"tags"`
 	ReasoningEffort string `json:"reasoning_effort"`
+	ImageSupport    string `json:"image_support"`
 	ModelID         string `json:"model_id"`
 }
 
@@ -164,6 +171,7 @@ func (q *Queries) UpdateModel(ctx context.Context, arg UpdateModelParams) (Model
 		arg.MaxTokens,
 		arg.Tags,
 		arg.ReasoningEffort,
+		arg.ImageSupport,
 		arg.ModelID,
 	)
 	var i Model
@@ -179,6 +187,7 @@ func (q *Queries) UpdateModel(ctx context.Context, arg UpdateModelParams) (Model
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReasoningEffort,
+		&i.ImageSupport,
 	)
 	return i, err
 }

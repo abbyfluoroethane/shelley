@@ -133,6 +133,12 @@ export const ja: TranslationKeys = {
   apiKey: "APIキー",
   enterApiKey: "APIキーを入力",
   maxContextTokens: "最大コンテキストトークン数",
+  imageSupport: "Image input support",
+  imageSupportHelp:
+    "Auto consults models.dev/api.json. Choose Supported or Not supported to override.",
+  imageSupportAuto: "Auto (from models.dev)",
+  imageSupportYes: "Supported",
+  imageSupportNo: "Not supported",
   tags: "タグ",
   tagsPlaceholder: "カンマ区切り、例: slug, cheap",
   tagsTooltip:

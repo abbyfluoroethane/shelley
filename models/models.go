@@ -16,6 +16,7 @@ import (
 	"shelley.exe.dev/llm/llmhttp"
 	"shelley.exe.dev/llm/oai"
 	"shelley.exe.dev/loop"
+	"shelley.exe.dev/models/modelsdev"
 )
 
 // Provider represents an LLM provider
@@ -598,6 +599,16 @@ func (l *loggingService) SupportsServerSideWebSearch() bool {
 	return false
 }
 
+// SupportsImages delegates to the underlying service if it implements
+// claudetool.ImageCapable. Defaults to true for backwards compatibility.
+func (l *loggingService) SupportsImages() bool {
+	type capable interface{ SupportsImages() bool }
+	if c, ok := l.service.(capable); ok {
+		return c.SupportsImages()
+	}
+	return true
+}
+
 // NewManager creates a new Manager with all models configured
 func NewManager(cfg *Config) (*Manager, error) {
 	manager := &Manager{
@@ -777,22 +788,29 @@ func (m *Manager) GetModelInfo(modelID string) *ModelInfo {
 
 // createServiceFromModel creates an LLM service from a database model configuration
 func (m *Manager) createServiceFromModel(model *generated.Model) llm.Service {
+	supportsImages := resolveSupportsImages(model.ProviderType, model.ModelName, model.ImageSupport)
 	switch model.ProviderType {
 	case "anthropic":
 		return &ant.Service{
-			APIKey:        model.ApiKey,
-			URL:           model.Endpoint,
-			Model:         model.ModelName,
-			HTTPC:         m.httpc,
-			ThinkingLevel: llm.ThinkingLevelMedium,
+			APIKey:          model.ApiKey,
+			URL:             model.Endpoint,
+			Model:           model.ModelName,
+			HTTPC:           m.httpc,
+			ThinkingLevel:   llm.ThinkingLevelMedium,
+			SupportsImages_: supportsImages,
 		}
 	case "openai":
 		return &oai.Service{
 			APIKey:   model.ApiKey,
 			ModelURL: model.Endpoint,
 			Model: oai.Model{
-				ModelName: model.ModelName,
-				URL:       model.Endpoint,
+				UserName:           "",
+				ModelName:          model.ModelName,
+				URL:                model.Endpoint,
+				APIKeyEnv:          "",
+				IsReasoningModel:   false,
+				UseSimplifiedPatch: false,
+				SupportsImages:     supportsImages,
 			},
 			MaxTokens:    int(model.MaxTokens),
 			HTTPC:        m.httpc,
@@ -803,8 +821,13 @@ func (m *Manager) createServiceFromModel(model *generated.Model) llm.Service {
 			APIKey:   model.ApiKey,
 			ModelURL: model.Endpoint,
 			Model: oai.Model{
-				ModelName: model.ModelName,
-				URL:       model.Endpoint,
+				UserName:           "",
+				ModelName:          model.ModelName,
+				URL:                model.Endpoint,
+				APIKeyEnv:          "",
+				IsReasoningModel:   false,
+				UseSimplifiedPatch: false,
+				SupportsImages:     supportsImages,
 			},
 			MaxTokens:       int(model.MaxTokens),
 			HTTPC:           m.httpc,
@@ -819,11 +842,32 @@ func (m *Manager) createServiceFromModel(model *generated.Model) llm.Service {
 			Model:           model.ModelName,
 			HTTPC:           m.httpc,
 			ReasoningEffort: model.ReasoningEffort,
+			SupportsImages_: supportsImages,
 		}
 	default:
 		if m.logger != nil {
 			m.logger.Error("Unknown provider type for model", "model_id", model.ModelID, "provider_type", model.ProviderType)
 		}
 		return nil
+	}
+}
+
+// resolveSupportsImages turns a stored image_support value ("auto"|"yes"|"no")
+// into a SupportsImages bool. "auto" defers to models.dev; unknown models
+// default to allowing images.
+func resolveSupportsImages(provider, modelName, imageSupport string) bool {
+	switch imageSupport {
+	case "yes":
+		return true
+	case "no":
+		return false
+	case "auto", "":
+		supported, found := modelsdev.LookupImageSupport(provider, modelName)
+		if !found {
+			return true
+		}
+		return supported
+	default:
+		return true
 	}
 }

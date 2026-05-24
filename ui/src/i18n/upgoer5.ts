@@ -133,6 +133,12 @@ export const upgoer5: TranslationKeys = {
   apiKey: "Key",
   enterApiKey: "Put in your key",
   maxContextTokens: "Most words it can hold in its head",
+  imageSupport: "Image input support",
+  imageSupportHelp:
+    "Auto consults models.dev/api.json. Choose Supported or Not supported to override.",
+  imageSupportAuto: "Auto (from models.dev)",
+  imageSupportYes: "Supported",
+  imageSupportNo: "Not supported",
   tags: "Marks",
   tagsPlaceholder: "put a small low mark between each one, like: fast, big",
   tagsTooltip:

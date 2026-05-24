@@ -451,6 +451,11 @@ func (s *ResponsesService) Provider() string { return s.ProviderName }
 // OpenAI server-side `web_search_preview` tool.
 func (s *ResponsesService) SupportsServerSideWebSearch() bool { return true }
 
+// SupportsImages reports whether this service accepts image inputs.
+// OpenAI Responses API supports images for vision models; set
+// Model.SupportsImages to enable image inputs.
+func (s *ResponsesService) SupportsImages() bool { return s.Model.SupportsImages }
+
 // TokenContextWindow returns the maximum token context window size for this service
 func (s *ResponsesService) TokenContextWindow() int {
 	model := cmp.Or(s.Model, DefaultModel)

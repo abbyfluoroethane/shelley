@@ -211,9 +211,17 @@ func NewOrchestratorToolSet(ctx context.Context, cfg OrchestratorToolSetConfig) 
 		tools = append(tools, subagentTool.Tool())
 	}
 
-	// Browser tools for read_image (screenshot viewing)
+	// Browser tools for read_image (screenshot viewing).
+	// Gate read_image on whether the underlying service supports image inputs;
+	// models without image support produce errors when asked to read images.
 	var cleanup func()
-	if cfg.EnableBrowser && IsToolEnabled("read_image", cfg.ToolOverrides, cfg.DisableAllTools) {
+	modelSupportsImages := true
+	if cfg.LLMProvider != nil && cfg.ModelID != "" {
+		if svc, err := cfg.LLMProvider.GetService(cfg.ModelID); err == nil {
+			modelSupportsImages = supportsImages(svc)
+		}
+	}
+	if cfg.EnableBrowser && IsToolEnabled("read_image", cfg.ToolOverrides, cfg.DisableAllTools) && modelSupportsImages {
 		browserTools, browserCleanup := browse.RegisterBrowserTools(ctx)
 		// Only include read_image from browser tools, not the full browser
 		for _, bt := range browserTools {
@@ -237,6 +245,22 @@ func NewOrchestratorToolSet(ctx context.Context, cfg OrchestratorToolSetConfig) 
 // supports web search; the legacy Chat Completions API does not.
 type ServerSideWebSearchCapable interface {
 	SupportsServerSideWebSearch() bool
+}
+
+// ImageCapable is implemented by services that report whether they accept
+// image inputs. Services that don't implement this default to "supports
+// images" for backwards compatibility.
+type ImageCapable interface {
+	SupportsImages() bool
+}
+
+// supportsImages reports whether the given service accepts image inputs.
+// Defaults to true for services that don't implement ImageCapable.
+func supportsImages(svc llm.Service) bool {
+	if c, ok := svc.(ImageCapable); ok {
+		return c.SupportsImages()
+	}
+	return true
 }
 
 // serverSideTools returns server-side tools appropriate for the given service.
@@ -377,7 +401,22 @@ func NewToolSet(ctx context.Context, cfg ToolSetConfig) *ToolSet {
 	if cfg.EnableBrowser && anyBrowserToolEnabled {
 		browserTools, browserCleanup := browse.RegisterBrowserTools(ctx)
 		if len(browserTools) > 0 {
-			tools = append(tools, browserTools...)
+			// If the model doesn't support image inputs, drop read_image — it
+			// returns image content the model cannot consume.
+			// TODO: the `browser` tool's screenshot action also returns images;
+			// we may need to gate or transform it for non-image-capable models.
+			modelSupportsImages := true
+			if cfg.LLMProvider != nil && cfg.ModelID != "" {
+				if svc, err := cfg.LLMProvider.GetService(cfg.ModelID); err == nil {
+					modelSupportsImages = supportsImages(svc)
+				}
+			}
+			for _, bt := range browserTools {
+				if bt.Name == "read_image" && !modelSupportsImages {
+					continue
+				}
+				tools = append(tools, bt)
+			}
 		}
 		cleanup = browserCleanup
 	}

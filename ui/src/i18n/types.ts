@@ -133,6 +133,11 @@ export interface TranslationKeys {
   apiKey: string;
   enterApiKey: string;
   maxContextTokens: string;
+  imageSupport: string;
+  imageSupportHelp: string;
+  imageSupportAuto: string;
+  imageSupportYes: string;
+  imageSupportNo: string;
   tags: string;
   tagsPlaceholder: string;
   tagsTooltip: string;

@@ -27,9 +27,12 @@ type ModelAPI struct {
 	MaxTokens       int64  `json:"max_tokens"`
 	Tags            string `json:"tags"`             // Comma-separated tags (e.g., "slug" for slug generation)
 	ReasoningEffort string `json:"reasoning_effort"` // Free-form reasoning.effort for OpenAI Responses API; empty = default
+	// ImageSupport is one of "auto", "yes", or "no". "auto" defers to
+	// models.dev/api.json (see shelley/models/modelsdev).
+	ImageSupport string `json:"image_support"`
 }
 
-// CreateModelRequest is the request body for creating a model
+// CreateModelRequest is the request body for creating a model.
 type CreateModelRequest struct {
 	DisplayName     string `json:"display_name"`
 	ProviderType    string `json:"provider_type"`
@@ -39,9 +42,10 @@ type CreateModelRequest struct {
 	MaxTokens       int64  `json:"max_tokens"`
 	Tags            string `json:"tags"`             // Comma-separated tags
 	ReasoningEffort string `json:"reasoning_effort"` // Free-form reasoning.effort for OpenAI Responses API
+	ImageSupport    string `json:"image_support"`    // "auto"|"yes"|"no"; empty = "auto"
 }
 
-// UpdateModelRequest is the request body for updating a model
+// UpdateModelRequest is the request body for updating a model.
 type UpdateModelRequest struct {
 	DisplayName     string `json:"display_name"`
 	ProviderType    string `json:"provider_type"`
@@ -51,6 +55,19 @@ type UpdateModelRequest struct {
 	MaxTokens       int64  `json:"max_tokens"`
 	Tags            string `json:"tags"`             // Comma-separated tags
 	ReasoningEffort string `json:"reasoning_effort"` // Free-form reasoning.effort for OpenAI Responses API
+	ImageSupport    string `json:"image_support"`    // "auto"|"yes"|"no"; empty preserves existing
+}
+
+// validImageSupport returns the canonical value or an error.
+func validImageSupport(v string) (string, error) {
+	switch v {
+	case "", "auto":
+		return "auto", nil
+	case "yes", "no":
+		return v, nil
+	default:
+		return "", fmt.Errorf("image_support must be one of 'auto', 'yes', 'no'; got %q", v)
+	}
 }
 
 // TestModelRequest is the request body for testing a model
@@ -74,6 +91,7 @@ func toModelAPI(m generated.Model) ModelAPI {
 		MaxTokens:       m.MaxTokens,
 		Tags:            m.Tags,
 		ReasoningEffort: m.ReasoningEffort,
+		ImageSupport:    m.ImageSupport,
 	}
 }
 
@@ -131,6 +149,12 @@ func (s *Server) handleCreateModel(w http.ResponseWriter, r *http.Request) {
 		req.MaxTokens = 200000
 	}
 
+	imageSupport, err := validImageSupport(req.ImageSupport)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	model, err := s.db.CreateModel(r.Context(), generated.CreateModelParams{
 		ModelID:         modelID,
 		DisplayName:     req.DisplayName,
@@ -141,6 +165,7 @@ func (s *Server) handleCreateModel(w http.ResponseWriter, r *http.Request) {
 		MaxTokens:       req.MaxTokens,
 		Tags:            req.Tags,
 		ReasoningEffort: req.ReasoningEffort,
+		ImageSupport:    imageSupport,
 	})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create model: %v", err), http.StatusInternalServerError)
@@ -230,6 +255,17 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request, model
 		req.MaxTokens = 200000
 	}
 
+	// Empty image_support preserves the existing value; otherwise validate.
+	imageSupport := existing.ImageSupport
+	if req.ImageSupport != "" {
+		v, err := validImageSupport(req.ImageSupport)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		imageSupport = v
+	}
+
 	model, err := s.db.UpdateModel(r.Context(), generated.UpdateModelParams{
 		DisplayName:     req.DisplayName,
 		ProviderType:    req.ProviderType,
@@ -239,6 +275,7 @@ func (s *Server) handleUpdateModel(w http.ResponseWriter, r *http.Request, model
 		MaxTokens:       req.MaxTokens,
 		Tags:            req.Tags,
 		ReasoningEffort: req.ReasoningEffort,
+		ImageSupport:    imageSupport,
 		ModelID:         modelID,
 	})
 	if err != nil {
@@ -309,6 +346,7 @@ func (s *Server) handleDuplicateModel(w http.ResponseWriter, r *http.Request, mo
 		MaxTokens:       source.MaxTokens,
 		Tags:            "", // Don't copy tags
 		ReasoningEffort: source.ReasoningEffort,
+		ImageSupport:    source.ImageSupport,
 	})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to duplicate model: %v", err), http.StatusInternalServerError)
@@ -367,8 +405,13 @@ func (s *Server) handleTestModel(w http.ResponseWriter, r *http.Request) {
 			APIKey:   req.APIKey,
 			ModelURL: req.Endpoint,
 			Model: oai.Model{
-				ModelName: req.ModelName,
-				URL:       req.Endpoint,
+				UserName:           "",
+				ModelName:          req.ModelName,
+				URL:                req.Endpoint,
+				APIKeyEnv:          "",
+				IsReasoningModel:   false,
+				UseSimplifiedPatch: false,
+				SupportsImages:     true,
 			},
 		}
 	case "gemini":
@@ -382,8 +425,13 @@ func (s *Server) handleTestModel(w http.ResponseWriter, r *http.Request) {
 		service = &oai.ResponsesService{
 			APIKey: req.APIKey,
 			Model: oai.Model{
-				ModelName: req.ModelName,
-				URL:       req.Endpoint,
+				UserName:           "",
+				ModelName:          req.ModelName,
+				URL:                req.Endpoint,
+				APIKeyEnv:          "",
+				IsReasoningModel:   false,
+				UseSimplifiedPatch: false,
+				SupportsImages:     true,
 			},
 			// Match createServiceFromModel so Test reflects real runtime behavior:
 			// medium is the default when no explicit override is given.

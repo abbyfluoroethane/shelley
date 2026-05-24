@@ -133,6 +133,12 @@ export const zhCN: TranslationKeys = {
   apiKey: "API 密钥",
   enterApiKey: "输入 API 密钥",
   maxContextTokens: "最大上下文令牌数",
+  imageSupport: "Image input support",
+  imageSupportHelp:
+    "Auto consults models.dev/api.json. Choose Supported or Not supported to override.",
+  imageSupportAuto: "Auto (from models.dev)",
+  imageSupportYes: "Supported",
+  imageSupportNo: "Not supported",
   tags: "标签",
   tagsPlaceholder: "逗号分隔，例如：slug, cheap",
   tagsTooltip:
