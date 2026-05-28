@@ -74,8 +74,8 @@ func TestByID(t *testing.T) {
 
 func TestDefault(t *testing.T) {
 	d := Default()
-	if d.ID != "claude-opus-4.7" {
-		t.Errorf("Default().ID = %q, want %q", d.ID, "claude-opus-4.7")
+	if d.ID != "claude-opus-4.8" {
+		t.Errorf("Default().ID = %q, want %q", d.ID, "claude-opus-4.8")
 	}
 }
 

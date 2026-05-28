@@ -155,13 +155,37 @@ func (c *Config) getFireworksURL() string {
 	return "" // use default from oai package
 }
 
-// All returns all available models in Shelley
+// All returns all available models in Shelley.
+//
+// Order is significant: it is the display order in the model picker, not a
+// statement about which model is the default. Default() is chosen separately,
+// so do not assume All()[0] is the default.
+//
+// Models are organized by "family" — the usual notion of a model lineage from
+// one provider/trainer (the "Opus" line, the "GPT-5" line, and so on).
+//
+// Only the newest release in a family holds that family's flagship slot near
+// the top of the list. Older releases in the same family are obviated by the
+// newer one and drop into the secondary group lower down (they stay selectable,
+// just deprioritized). A different family is never obviated by a higher-numbered
+// release of another family, so each family keeps its own flagship slot.
+//
+// There is one surprising wrinkle: Opus <= 4.6 and Opus >= 4.7 are treated as
+// two separate families even though both are "Opus". The reason is the
+// tokenizer. Opus 4.7 introduced a new tokenizer (inherited by 4.8) that emits
+// more tokens for the same text — the per-token rates are identical across 4.6,
+// 4.7, and 4.8, but the same prompt costs more under 4.7/4.8. That difference is
+// large enough that we keep 4.6 in its own flagship slot rather than letting it
+// be obviated by 4.7/4.8.
+//
+// When adding a newer release of an existing family, put it in the family's
+// flagship slot and move the prior release down into the secondary group.
 func All() []Model {
 	return []Model{
 		{
 			ID:              "claude-opus-4.8",
 			Provider:        ProviderAnthropic,
-			Description:     "Claude Opus 4.8",
+			Description:     "Claude Opus 4.8 (default)",
 			RequiredEnvVars: []string{"ANTHROPIC_API_KEY"},
 			GatewayEnabled:  true,
 			Factory: func(config *Config, httpc *http.Client) (llm.Service, error) {
@@ -169,23 +193,6 @@ func All() []Model {
 					return nil, fmt.Errorf("claude-opus-4.8 requires ANTHROPIC_API_KEY")
 				}
 				svc := &ant.Service{APIKey: config.AnthropicAPIKey, Model: ant.Claude48Opus, HTTPC: httpc, ThinkingLevel: llm.ThinkingLevelMedium}
-				if url := config.getAnthropicURL(); url != "" {
-					svc.URL = url
-				}
-				return svc, nil
-			},
-		},
-		{
-			ID:              "claude-opus-4.7",
-			Provider:        ProviderAnthropic,
-			Description:     "Claude Opus 4.7 (default)",
-			RequiredEnvVars: []string{"ANTHROPIC_API_KEY"},
-			GatewayEnabled:  true,
-			Factory: func(config *Config, httpc *http.Client) (llm.Service, error) {
-				if config.AnthropicAPIKey == "" {
-					return nil, fmt.Errorf("claude-opus-4.7 requires ANTHROPIC_API_KEY")
-				}
-				svc := &ant.Service{APIKey: config.AnthropicAPIKey, Model: ant.Claude47Opus, HTTPC: httpc, ThinkingLevel: llm.ThinkingLevelMedium}
 				if url := config.getAnthropicURL(); url != "" {
 					svc.URL = url
 				}
@@ -289,6 +296,23 @@ func All() []Model {
 				svc := &oai.Service{Model: oai.DeepseekV4ProFireworks, APIKey: config.FireworksAPIKey, HTTPC: httpc, ProviderName: "fireworks"}
 				if url := config.getFireworksURL(); url != "" {
 					svc.ModelURL = url
+				}
+				return svc, nil
+			},
+		},
+		{
+			ID:              "claude-opus-4.7",
+			Provider:        ProviderAnthropic,
+			Description:     "Claude Opus 4.7",
+			RequiredEnvVars: []string{"ANTHROPIC_API_KEY"},
+			GatewayEnabled:  true,
+			Factory: func(config *Config, httpc *http.Client) (llm.Service, error) {
+				if config.AnthropicAPIKey == "" {
+					return nil, fmt.Errorf("claude-opus-4.7 requires ANTHROPIC_API_KEY")
+				}
+				svc := &ant.Service{APIKey: config.AnthropicAPIKey, Model: ant.Claude47Opus, HTTPC: httpc, ThinkingLevel: llm.ThinkingLevelMedium}
+				if url := config.getAnthropicURL(); url != "" {
+					svc.URL = url
 				}
 				return svc, nil
 			},
@@ -483,8 +507,7 @@ func IDs() []string {
 
 // Default returns the default model
 func Default() Model {
-	// claude-opus-4.7 — not yet promoting 4.8 to default.
-	if m := ByID("claude-opus-4.7"); m != nil {
+	if m := ByID("claude-opus-4.8"); m != nil {
 		return *m
 	}
 	return All()[0]

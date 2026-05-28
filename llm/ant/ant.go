@@ -72,7 +72,7 @@ func ClaudeModelName(userName string) string {
 	case "claude", "sonnet":
 		return Claude46Sonnet
 	case "opus":
-		return Claude47Opus
+		return Claude48Opus
 	default:
 		return ""
 	}
