@@ -112,11 +112,9 @@ func TestInterruptionDuringToolExecution(t *testing.T) {
 	defer cancel()
 
 	var loopDone sync.WaitGroup
-	loopDone.Add(1)
-	go func() {
-		defer loopDone.Done()
+	loopDone.Go(func() {
 		loop.Go(ctx)
-	}()
+	})
 
 	// Wait for tool to start
 	for !toolStarted.Load() {
@@ -252,11 +250,9 @@ func TestInterruptionDuringMultiToolChain(t *testing.T) {
 	defer cancel()
 
 	var loopDone sync.WaitGroup
-	loopDone.Add(1)
-	go func() {
-		defer loopDone.Done()
+	loopDone.Go(func() {
 		loop.Go(ctx)
-	}()
+	})
 
 	// Wait for first tool call to complete
 	for toolCallCount.Load() < 1 {
@@ -432,11 +428,9 @@ func TestNoInterruptionNormalFlow(t *testing.T) {
 	defer cancel()
 
 	var loopDone sync.WaitGroup
-	loopDone.Add(1)
-	go func() {
-		defer loopDone.Done()
+	loopDone.Go(func() {
 		loop.Go(ctx)
-	}()
+	})
 
 	// Wait for completion
 	time.Sleep(500 * time.Millisecond)
