@@ -16,6 +16,7 @@ export const ru: TranslationKeys = {
   gitGraph: "Граф Git",
   terminal: "Терминал",
   archiveConversation: "Архивировать диалог",
+  exportConversation: "Экспортировать диалог",
   checkForNewVersion: "Проверить обновления",
   markdown: "Markdown",
   off: "Откл",

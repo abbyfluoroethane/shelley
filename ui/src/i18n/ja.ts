@@ -16,6 +16,7 @@ export const ja: TranslationKeys = {
   gitGraph: "Git グラフ",
   terminal: "ターミナル",
   archiveConversation: "会話をアーカイブ",
+  exportConversation: "会話をエクスポート",
   checkForNewVersion: "新しいバージョンを確認",
   markdown: "Markdown",
   off: "オフ",

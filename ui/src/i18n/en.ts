@@ -16,6 +16,7 @@ export const en: TranslationKeys = {
   gitGraph: "Git Graph",
   terminal: "Terminal",
   archiveConversation: "Archive Conversation",
+  exportConversation: "Export Conversation",
   checkForNewVersion: "Check for New Version",
   markdown: "Markdown",
   off: "Off",

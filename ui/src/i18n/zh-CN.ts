@@ -16,6 +16,7 @@ export const zhCN: TranslationKeys = {
   gitGraph: "Git 图",
   terminal: "终端",
   archiveConversation: "归档对话",
+  exportConversation: "导出对话",
   checkForNewVersion: "检查新版本",
   markdown: "Markdown",
   off: "关闭",

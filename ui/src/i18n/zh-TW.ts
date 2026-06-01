@@ -16,6 +16,7 @@ export const zhTW: TranslationKeys = {
   gitGraph: "Git 圖",
   terminal: "終端機",
   archiveConversation: "封存對話",
+  exportConversation: "匯出對話",
   checkForNewVersion: "檢查新版本",
   markdown: "Markdown",
   off: "關閉",

@@ -28,6 +28,7 @@ import DiffViewer from "./DiffViewer";
 import { focusMessageInputIfUnfocused } from "../utils/focusMessageInput";
 import MessageSelectionToolbar from "./MessageSelectionToolbar";
 import { buildMessageQuote } from "../utils/messageQuote";
+import { openConversationExport } from "../utils/exportConversation";
 import { tildifyPath } from "../utils/tildify";
 import { handleModifiedNavClick } from "../utils/openInNewTab";
 import GitGraphViewer from "./GitGraphViewer";
@@ -2772,6 +2773,35 @@ function ChatInterface({
                         />
                       </svg>
                       {t("archiveConversation")}
+                    </button>
+                  </>
+                )}
+
+                {/* Export conversation as Markdown */}
+                {conversationId && messages.length > 0 && (
+                  <>
+                    <div className="overflow-menu-divider" />
+                    <button
+                      onClick={() => {
+                        setShowOverflowMenu(false);
+                        openConversationExport(currentConversation, messages);
+                      }}
+                      className="overflow-menu-item"
+                    >
+                      <svg
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        className="chat-menu-icon"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                        />
+                      </svg>
+                      {t("exportConversation")}
                     </button>
                   </>
                 )}

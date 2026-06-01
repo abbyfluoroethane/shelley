@@ -16,6 +16,7 @@ export const upgoer5: TranslationKeys = {
   gitGraph: "Story Tree",
   terminal: "Computer Window",
   archiveConversation: "Put Away Talk",
+  exportConversation: "Save Out Talk",
   checkForNewVersion: "Look for a newer one",
   markdown: "Pretty Words",
   off: "Off",

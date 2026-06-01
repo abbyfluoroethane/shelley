@@ -16,6 +16,7 @@ export interface TranslationKeys {
   gitGraph: string;
   terminal: string;
   archiveConversation: string;
+  exportConversation: string;
   checkForNewVersion: string;
   markdown: string;
   off: string;

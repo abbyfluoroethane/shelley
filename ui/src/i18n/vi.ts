@@ -16,6 +16,7 @@ export const vi: TranslationKeys = {
   gitGraph: "Biểu đồ Git",
   terminal: "Terminal",
   archiveConversation: "Hội thoại đã lưu trữ",
+  exportConversation: "Xuất hội thoại",
   checkForNewVersion: "Kiểm tra cập nhật",
   markdown: "Markdown",
   off: "Tắt",
