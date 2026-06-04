@@ -43,14 +43,16 @@ func TestHandleVersion(t *testing.T) {
 	if body.Capabilities == nil {
 		t.Fatalf("expected capabilities field in response, got nil")
 	}
-	var haveThinking bool
+	want := map[string]bool{"thinking-levels": false, "drafts": false}
 	for _, c := range *body.Capabilities {
-		if c == "thinking-levels" {
-			haveThinking = true
+		if _, ok := want[c]; ok {
+			want[c] = true
 		}
 	}
-	if !haveThinking {
-		t.Errorf("expected capabilities to include \"thinking-levels\", got %v", *body.Capabilities)
+	for name, found := range want {
+		if !found {
+			t.Errorf("expected capabilities to include %q, got %v", name, *body.Capabilities)
+		}
 	}
 	if body.Modified != nil {
 		t.Errorf("unexpected modified field in response: %v", *body.Modified)

@@ -17,6 +17,8 @@ export interface Conversation {
   current_generation: number;
   agent_working: boolean;
   tags: string;
+  is_draft: boolean;
+  draft: string;
 }
 
 export interface Usage {
@@ -81,6 +83,8 @@ export interface ConversationWithStateForTS {
   current_generation: number;
   agent_working: boolean;
   tags: string;
+  is_draft: boolean;
+  draft: string;
   working: boolean;
   git_repo_root?: string;
   git_worktree_root?: string;

@@ -118,6 +118,8 @@ function conv(convId: string, agentWorking: boolean): Conversation {
     current_generation: 0,
     agent_working: agentWorking,
     tags: "[]",
+    is_draft: false,
+    draft: "",
   };
 }
 

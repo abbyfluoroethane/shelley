@@ -24,6 +24,7 @@ import MessageComponent from "./Message";
 import ConversationTOC from "./ConversationTOC";
 import MessageTimestamp, { formatDay } from "./MessageTimestamp";
 import MessageInput from "./MessageInput";
+import { useDraftAutosave } from "../hooks/useDraftAutosave";
 import DiffViewer from "./DiffViewer";
 import { focusMessageInputIfUnfocused } from "../utils/focusMessageInput";
 import MessageSelectionToolbar from "./MessageSelectionToolbar";
@@ -755,6 +756,10 @@ interface ChatInterfaceProps {
   onTerminalClose?: (id: string) => void;
   navigateUserMessageTrigger?: number; // positive = next, negative = previous
   onConversationUnarchived?: (conversation: Conversation) => void;
+  /** Called once the lazy server-side draft has been created so App can
+   *  switch the active conversation to it. Subsequent autosaves use the
+   *  conversation's existing id. */
+  onDraftCreated?: (conversationId: string) => void;
 }
 
 const LANGUAGE_OPTIONS: { locale: Locale; flag: string; label: string }[] = [
@@ -888,6 +893,7 @@ function ChatInterface({
   onTerminalClose,
   navigateUserMessageTrigger,
   onConversationUnarchived,
+  onDraftCreated,
 }: ChatInterfaceProps) {
   const toolPillsEnabled = useFeatureFlag("tool-pills");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -1815,13 +1821,31 @@ function ChatInterface({
       setAgentWorking(true);
       setStreamingText("");
 
-      // If no conversation ID, this is the first message.
-      if (!conversationId && onFirstMessage) {
+      // If a draft create is in flight (autosave fired right before the
+      // user hit send), wait for it to land so we promote the existing
+      // draft instead of orphaning it and creating a second conversation.
+      if (!conversationId && inflightCreateRef.current) {
+        try {
+          await inflightCreateRef.current;
+        } catch {
+          // If the create failed, fall through to the legacy first-message
+          // path so the user's message still goes somewhere.
+        }
+      }
+      // Drafts: forward cwd alongside the message so the server updates
+      // the conversation's cwd at promotion time.
+      const isDraftConv = !!currentConversation?.is_draft;
+      const effectiveId = conversationId || draftConvIdRef.current;
+      if (!effectiveId && onFirstMessage) {
         await sendFirstMessage(message.trim());
-      } else if (conversationId) {
-        await api.sendMessage(conversationId, {
+      } else if (effectiveId) {
+        await api.sendMessage(effectiveId, {
           message: message.trim(),
           model: selectedModel,
+          // Forward cwd whenever it's a draft (either the active row says
+          // is_draft or we just joined an in-flight create whose row
+          // hasn't reached us via the patch stream yet).
+          cwd: (isDraftConv || !conversationId) && selectedCwd ? selectedCwd : undefined,
         });
       }
     } catch (err) {
@@ -2493,8 +2517,9 @@ function ChatInterface({
           agentWorking={agentWorking}
         />
       </div>
-    ) : !conversationId ? (
-      // New conversation — show model picker and cwd selector
+    ) : !conversationId || currentConversation?.is_draft ? (
+      // New conversation or draft — show model picker and cwd selector.
+      // Drafts are pre-promotion: the model/cwd are still editable.
       <div className="status-bar-new-conversation">
         <div className="status-field status-field-model">
           <span className="status-field-label" title="AI model to use for this conversation">
@@ -2687,6 +2712,93 @@ function ChatInterface({
       </div>
     );
   }
+
+  // ---- Draft autosave ----
+  // Drafts are real conversations with no messages and `is_draft=true`.
+  // - New-conversation view (conversationId === null): the first non-empty
+  //   autosave creates a draft on the server, then we hand the id up so
+  //   App.tsx promotes it to the active conversation. Further keystrokes
+  //   PUT against /conversation/<id>/draft.
+  // - Draft conversation: every keystroke PUTs.
+  // - Non-draft conversation: autosave is inert. Saves are debounced with
+  //   exponential backoff; see useDraftAutosave.
+  const [draftValue, setDraftValue] = useState<string>("");
+  // Initialize from the conversation row when switching into a draft.
+  useEffect(() => {
+    if (currentConversation?.is_draft) {
+      setDraftValue(currentConversation.draft || "");
+    } else if (!conversationId) {
+      setDraftValue("");
+    }
+    // Switching into a non-draft conversation leaves draftValue stale,
+    // but the MessageInput is keyed by conversationId so it remounts and
+    // re-syncs from this state on the next render anyway.
+  }, [conversationId, currentConversation?.is_draft, currentConversation?.draft]);
+
+  const draftConvIdRef = useRef<string | null>(conversationId);
+  useEffect(() => {
+    draftConvIdRef.current = conversationId;
+  }, [conversationId]);
+
+  // Tracks an in-flight POST /conversations/draft so a send-before-create
+  // doesn't race the lazy create and end up double-creating a conversation.
+  const inflightCreateRef = useRef<Promise<string> | null>(null);
+
+  const saveDraft = useCallback(
+    async (value: string) => {
+      const id = draftConvIdRef.current;
+      if (id) {
+        // Only PUT against drafts; non-drafts ignore autosave entirely.
+        if (currentConversation?.is_draft) {
+          await api.updateDraft(id, value);
+        }
+        return;
+      }
+      // Don't materialize a draft for empty/whitespace input.
+      if (!value.trim()) return;
+      // Join an existing in-flight create rather than launching a second.
+      if (inflightCreateRef.current) {
+        await inflightCreateRef.current;
+        return;
+      }
+      const p = api
+        .createDraft({
+          draft: value,
+          model: selectedModel,
+          cwd: selectedCwd || undefined,
+        })
+        .then((conv) => {
+          draftConvIdRef.current = conv.conversation_id;
+          onDraftCreated?.(conv.conversation_id);
+          return conv.conversation_id;
+        });
+      inflightCreateRef.current = p;
+      try {
+        await p;
+      } finally {
+        if (inflightCreateRef.current === p) inflightCreateRef.current = null;
+      }
+    },
+    [currentConversation?.is_draft, selectedModel, selectedCwd, onDraftCreated],
+  );
+
+  const draftAutosave = useDraftAutosave(saveDraft);
+  const handleDraftChange = useCallback(
+    (value: string) => {
+      setDraftValue(value);
+      draftAutosave.schedule(value);
+    },
+    [draftAutosave],
+  );
+  const handleDraftSendStarted = useCallback(() => {
+    // Stop any pending autosave but leave the controlled value alone so
+    // the textarea keeps the in-flight message if the send fails.
+    draftAutosave.cancel();
+  }, [draftAutosave]);
+  const handleDraftCleared = useCallback(() => {
+    setDraftValue("");
+    draftAutosave.cancel();
+  }, [draftAutosave]);
 
   return (
     <div className="full-height flex flex-col">
@@ -3269,10 +3381,14 @@ function ChatInterface({
       {/* Status bar — always visible on desktop; hidden on mobile for active convos
           (CSS hides it, and content is suppressed to avoid duplicate DOM elements). */}
       <div
-        className={`status-bar${currentConversation?.archived ? " status-bar-archived" : ""}${!conversationId ? " status-bar-new" : ""}`}
+        className={`status-bar${currentConversation?.archived ? " status-bar-archived" : ""}${!conversationId || currentConversation?.is_draft ? " status-bar-new" : ""}`}
       >
         <div className="status-bar-content">
-          {(!isMobile || !conversationId || currentConversation?.archived) && renderStatusContent()}
+          {(!isMobile ||
+            !conversationId ||
+            currentConversation?.is_draft ||
+            currentConversation?.archived) &&
+            renderStatusContent()}
         </div>
       </div>
 
@@ -3292,8 +3408,11 @@ function ChatInterface({
             setDiffCommentText("");
             setTerminalInjectedText(null);
           }}
-          persistKey={conversationId || "new-conversation"}
-          initialRows={conversationId ? 1 : 3}
+          draftValue={draftValue}
+          onDraftChange={handleDraftChange}
+          onDraftSendStarted={handleDraftSendStarted}
+          onDraftCleared={handleDraftCleared}
+          initialRows={conversationId && !currentConversation?.is_draft ? 1 : 3}
           statusSlot={conversationId && isMobile ? renderStatusContent() : undefined}
         />
       )}

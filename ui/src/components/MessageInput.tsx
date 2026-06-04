@@ -59,35 +59,22 @@ interface MessageInputProps {
   onFocus?: () => void;
   injectedText?: string;
   onClearInjectedText?: () => void;
-  /** If set, persist draft message to localStorage under this key */
-  persistKey?: string;
+  /** Controlled draft text. When provided, MessageInput surfaces every
+   * keystroke via onDraftChange so the parent can persist it (server-side
+   * autosave for draft conversations). */
+  draftValue?: string;
+  onDraftChange?: (value: string) => void;
+  /** Pause autosave — called the instant the user hits send so the
+   * trailing PUT doesn't race the chat POST. The parent should drop any
+   * pending timer but leave its draftValue alone; the textarea retains
+   * the in-flight message so a failed send doesn't lose user input. */
+  onDraftSendStarted?: () => void;
+  /** Called once the message has been successfully sent so the parent can
+   * tear down any remaining autosave state. */
+  onDraftCleared?: () => void;
   initialRows?: number;
   /** Status bar content rendered inline on mobile (hidden on desktop) */
   statusSlot?: React.ReactNode;
-}
-
-const PERSIST_KEY_PREFIX = "shelley_draft_";
-
-function draftStorageKey(persistKey: string): string {
-  return PERSIST_KEY_PREFIX + persistKey;
-}
-
-function draftUpdatedAtStorageKey(persistKey: string): string {
-  return draftStorageKey(persistKey) + "_updated_at";
-}
-
-function notifyDraftChanged(persistKey: string, value: string): void {
-  window.dispatchEvent(
-    new CustomEvent("shelley-draft-changed", {
-      detail: { key: persistKey, value },
-    }),
-  );
-}
-
-function clearPersistedDraft(persistKey: string): void {
-  localStorage.removeItem(draftStorageKey(persistKey));
-  localStorage.removeItem(draftUpdatedAtStorageKey(persistKey));
-  notifyDraftChanged(persistKey, "");
 }
 
 interface Attachment {
@@ -113,18 +100,33 @@ function MessageInput({
   onFocus,
   injectedText,
   onClearInjectedText,
-  persistKey,
+  draftValue,
+  onDraftChange,
+  onDraftSendStarted,
+  onDraftCleared,
   initialRows = 1,
   statusSlot,
 }: MessageInputProps) {
   const { t } = useI18n();
-  const [message, setMessage] = useState(() => {
-    // Load persisted draft if persistKey is set
-    if (persistKey) {
-      return localStorage.getItem(draftStorageKey(persistKey)) || "";
-    }
-    return "";
-  });
+  const [message, setMessageState] = useState(draftValue ?? "");
+  const setMessage = useCallback(
+    (next: string | ((prev: string) => string)) => {
+      setMessageState((prev) => {
+        const value = typeof next === "function" ? next(prev) : next;
+        if (onDraftChange && value !== prev) onDraftChange(value);
+        return value;
+      });
+    },
+    [onDraftChange],
+  );
+  // Sync external draft updates (e.g. when switching between draft
+  // conversations) into local state without losing focus.
+  useEffect(() => {
+    if (draftValue !== undefined) setMessageState(draftValue);
+    // We intentionally re-sync only when the *external* value changes; the
+    // setMessage path above already keeps the controlled value in sync
+    // for user edits.
+  }, [draftValue]);
   const [submitting, setSubmitting] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const uploadsInProgress = attachments.filter((a) => a.status === "uploading").length;
@@ -462,9 +464,7 @@ function MessageInput({
         const messageToQueue = composeMessageWithAttachments(message).trim();
         setMessage("");
         clearAttachments();
-        if (persistKey) {
-          clearPersistedDraft(persistKey);
-        }
+        onDraftCleared?.();
         try {
           await onQueue(messageToQueue);
         } catch {
@@ -474,18 +474,20 @@ function MessageInput({
       }
 
       const messageToSend = composeMessageWithAttachments(message);
+      // Pause autosave before awaiting onSend so a trailing PUT can't
+      // race the chat POST (404 after promote is harmless but noisy).
+      // We don't clear the draft yet — if the send fails, the textarea
+      // (and the server-side draft body) stay intact for retry.
+      onDraftSendStarted?.();
       setSubmitting(true);
       try {
         await onSend(messageToSend);
         // Only clear on success
         setMessage("");
         clearAttachments();
-        // Clear persisted draft on successful send
-        if (persistKey) {
-          clearPersistedDraft(persistKey);
-        }
+        onDraftCleared?.();
       } catch {
-        // Keep the message on error so user can retry
+        // Keep the message on error so user can retry.
       } finally {
         setSubmitting(false);
       }
@@ -500,9 +502,7 @@ function MessageInput({
       const messageToQueue = composeMessageWithAttachments(message).trim();
       setMessage("");
       clearAttachments();
-      if (persistKey) {
-        clearPersistedDraft(persistKey);
-      }
+      onDraftCleared?.();
       setShowQueueMenu(false);
       try {
         await onQueue(messageToQueue);
@@ -522,9 +522,7 @@ function MessageInput({
       const messageToSend = composeMessageWithAttachments(message).trim();
       setMessage("");
       clearAttachments();
-      if (persistKey) {
-        clearPersistedDraft(persistKey);
-      }
+      onDraftCleared?.();
       setShowQueueMenu(false);
       setSubmitting(true);
       try {
@@ -585,26 +583,6 @@ function MessageInput({
       textareaRef.current?.focus();
     }
   }, [submitting]);
-
-  // Persist draft to localStorage when persistKey is set, alongside a sibling
-  // 'updated_at' timestamp so the ConversationDrawer's draft entry can show
-  // a real timestamp in its meta row (same as actual conversations).
-  useEffect(() => {
-    if (persistKey) {
-      const tsKey = draftUpdatedAtStorageKey(persistKey);
-      if (message) {
-        localStorage.setItem(draftStorageKey(persistKey), message);
-        localStorage.setItem(tsKey, new Date().toISOString());
-      } else {
-        localStorage.removeItem(draftStorageKey(persistKey));
-        localStorage.removeItem(tsKey);
-      }
-      // Notify listeners (e.g. ConversationDrawer's draft entry) so they can
-      // refresh without polling. localStorage's 'storage' event only fires
-      // cross-tab, hence this custom event for same-tab updates.
-      notifyDraftChanged(persistKey, message);
-    }
-  }, [message, persistKey]);
 
   useEffect(() => {
     // Guard on !disabled (and depend on disabled) so focus is re-attempted

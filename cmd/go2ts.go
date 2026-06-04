@@ -112,6 +112,8 @@ type conversationWithStateForTS struct {
 	CurrentGeneration    int64   `json:"current_generation"`
 	AgentWorking         bool    `json:"agent_working"`
 	Tags                 string  `json:"tags"`
+	IsDraft              bool    `json:"is_draft"`
+	Draft                string  `json:"draft"`
 	Working              bool    `json:"working"`
 	GitRepoRoot          string  `json:"git_repo_root,omitempty"`
 	GitWorktreeRoot      string  `json:"git_worktree_root,omitempty"`

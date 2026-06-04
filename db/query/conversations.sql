@@ -3,6 +3,29 @@ INSERT INTO conversations (conversation_id, slug, user_initiated, cwd, model, co
 VALUES (?, ?, ?, ?, ?, ?)
 RETURNING *;
 
+-- name: CreateDraftConversation :one
+-- Creates a conversation in draft state with the given initial draft text.
+-- Drafts have no messages; the chat handler clears is_draft / draft when
+-- the user sends their first message via PromoteDraftConversation.
+INSERT INTO conversations (conversation_id, slug, user_initiated, cwd, model, conversation_options, is_draft, draft)
+VALUES (?, ?, TRUE, ?, ?, ?, TRUE, ?)
+RETURNING *;
+
+-- name: UpdateConversationDraft :one
+-- Sets the draft text and bumps updated_at so the conversation list
+-- reorders. Used by the autosave from the message input.
+UPDATE conversations
+SET draft = ?, updated_at = CURRENT_TIMESTAMP
+WHERE conversation_id = ? AND is_draft = TRUE
+RETURNING *;
+
+-- name: PromoteDraftConversation :one
+-- Clears the draft state when the user sends the first message.
+UPDATE conversations
+SET is_draft = FALSE, draft = '', updated_at = CURRENT_TIMESTAMP
+WHERE conversation_id = ? AND is_draft = TRUE
+RETURNING *;
+
 -- name: GetConversation :one
 SELECT * FROM conversations
 WHERE conversation_id = ?;

@@ -116,6 +116,43 @@ class ApiService {
     return response.json();
   }
 
+  // createDraft creates a draft conversation server-side. Drafts hold the
+  // unsent message text in a `draft` column and have no messages until the
+  // user actually sends. They appear in the conversation list like any
+  // other conversation, can be deleted, and get promoted (is_draft=false)
+  // automatically when the first message is posted to them.
+  async createDraft(request: {
+    draft: string;
+    model?: string;
+    cwd?: string;
+    conversation_options?: ChatRequest["conversation_options"];
+  }): Promise<Conversation> {
+    const response = await fetch(`${this.baseUrl}/conversations/draft`, {
+      method: "POST",
+      headers: this.postHeaders,
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      throw await responseError(response, "Failed to create draft");
+    }
+    return response.json();
+  }
+
+  // updateDraft replaces the draft text on an existing draft conversation.
+  // Returns 404 once the draft has been promoted (i.e. once the first
+  // message has been sent); callers should treat that as a no-op.
+  async updateDraft(conversationId: string, draft: string): Promise<Conversation> {
+    const response = await fetch(`${this.baseUrl}/conversation/${conversationId}/draft`, {
+      method: "PUT",
+      headers: this.postHeaders,
+      body: JSON.stringify({ draft }),
+    });
+    if (!response.ok) {
+      throw await responseError(response, "Failed to update draft");
+    }
+    return response.json();
+  }
+
   async sendMessageWithNewConversation(request: ChatRequest): Promise<{ conversation_id: string }> {
     const response = await fetch(`${this.baseUrl}/conversations/new`, {
       method: "POST",

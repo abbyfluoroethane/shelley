@@ -305,7 +305,11 @@ func TestMessagesTypeHasNoCheckConstraint(t *testing.T) {
 }
 
 func TestDropMessageTypeCheckMigrationPreservesSearch(t *testing.T) {
-	database := setupDBMigratedSkipping(t, 22)
+	// Run all migrations through HEAD. CreateConversation uses sqlc-generated
+	// INSERTs that reference columns added in later migrations, so we can't
+	// stop early. The test still verifies that migration 22 (and everything
+	// after) preserves the FTS triggers / indexes.
+	database := setupDBMigratedThrough(t, 1000)
 	defer database.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -329,10 +333,6 @@ func TestDropMessageTypeCheckMigrationPreservesSearch(t *testing.T) {
 		UserData:       map[string]any{"Content": []any{map[string]any{"Type": 2, "Text": "tool noise should not be indexed"}}},
 	}); err != nil {
 		t.Fatalf("CreateMessage tool: %v", err)
-	}
-
-	if err := database.runMigration(ctx, "022-drop-message-type-check-constraint.sql", 22); err != nil {
-		t.Fatalf("run migration 022: %v", err)
 	}
 
 	assertMessagesTableHasNoCheck(t, database, ctx)
