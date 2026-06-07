@@ -278,6 +278,28 @@ class ApiService {
     return new EventSource(`${this.baseUrl}/stream2${query ? `?${query}` : ""}`);
   }
 
+  // forkConversation creates a new conversation that copies all messages from
+  // the source up to and including the given message (or sequence_id), and
+  // returns the new conversation so the caller can navigate to it. With no
+  // cutoff, the whole conversation is forked.
+  async forkConversation(
+    conversationId: string,
+    opts: { messageId?: string; sequenceId?: number } = {},
+  ): Promise<Conversation> {
+    const response = await fetch(`${this.baseUrl}/conversation/${conversationId}/fork`, {
+      method: "POST",
+      headers: this.postHeaders,
+      body: JSON.stringify({
+        message_id: opts.messageId,
+        sequence_id: opts.sequenceId,
+      }),
+    });
+    if (!response.ok) {
+      throw await responseError(response, "Failed to fork conversation");
+    }
+    return response.json();
+  }
+
   async retryConversation(conversationId: string): Promise<void> {
     const response = await fetch(`${this.baseUrl}/conversation/${conversationId}/retry`, {
       method: "POST",

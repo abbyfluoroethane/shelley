@@ -721,6 +721,8 @@ interface ChatInterfaceProps {
   reconnectNonce?: number;
   onOpenDrawer: () => void;
   onNewConversation: () => void;
+  /** Navigate to an existing conversation (e.g. after forking). */
+  onSelectConversation?: (conversation: Conversation) => void;
   onArchiveConversation?: (conversationId: string) => Promise<void>;
   currentConversation?: Conversation;
   onConversationUpdate?: (conversation: Conversation) => void;
@@ -873,6 +875,7 @@ function ChatInterface({
   reconnectNonce = 0,
   onOpenDrawer,
   onNewConversation,
+  onSelectConversation,
   onArchiveConversation,
   currentConversation,
   onConversationUpdate,
@@ -1752,10 +1755,36 @@ function ChatInterface({
     );
   };
 
+  // forkConversation copies the current conversation up to and including the
+  // given message (or the whole thing if no message is specified) into a new
+  // conversation, then navigates to it.
+  const forkConversation = useCallback(
+    async (messageId?: string) => {
+      if (!conversationId) return;
+      try {
+        const forked = await api.forkConversation(conversationId, { messageId });
+        if (onSelectConversation) {
+          onSelectConversation(forked);
+        }
+      } catch (err) {
+        console.error("Failed to fork conversation:", err);
+        setError(err instanceof Error ? err.message : "Failed to fork conversation");
+      }
+    },
+    [conversationId, onSelectConversation],
+  );
+
   const sendMessage = async (message: string) => {
     if (!message.trim() || sending) return;
 
     const trimmedMessage = message.trim();
+
+    // "/fork" forks the current conversation (all messages) into a new one and
+    // navigates to it.
+    if (trimmedMessage === "/fork") {
+      await forkConversation();
+      return;
+    }
 
     // Slash commands.
     // "/diff" opens the diff viewer (mirroring the command palette action).
@@ -2377,6 +2406,7 @@ function ChatInterface({
               onCommentTextChange={setDiffCommentText}
               onCancelQueued={isQueuedMessage(item.message) ? cancelQueuedMessages : undefined}
               toolProgress={toolProgress}
+              onFork={conversationId ? forkConversation : undefined}
             />,
           );
         } else if (item.type === "tool") {

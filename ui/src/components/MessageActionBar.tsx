@@ -3,9 +3,10 @@ import React, { useState } from "react";
 interface MessageActionBarProps {
   onCopy?: () => void;
   onShowUsage?: () => void;
+  onFork?: () => void;
 }
 
-function MessageActionBar({ onCopy, onShowUsage }: MessageActionBarProps) {
+function MessageActionBar({ onCopy, onShowUsage, onFork }: MessageActionBarProps) {
   const [copyFeedback, setCopyFeedback] = useState(false);
 
   const handleCopy = (e: React.MouseEvent) => {
@@ -21,6 +22,13 @@ function MessageActionBar({ onCopy, onShowUsage }: MessageActionBarProps) {
     e.stopPropagation();
     if (onShowUsage) {
       onShowUsage();
+    }
+  };
+
+  const handleFork = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onFork) {
+      onFork();
     }
   };
 
@@ -72,10 +80,40 @@ function MessageActionBar({ onCopy, onShowUsage }: MessageActionBarProps) {
           )}
         </button>
       )}
+      {onFork && (
+        <button
+          onClick={handleFork}
+          title="Fork conversation from here"
+          className="message-action-button"
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = "transparent";
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 21 L12 13"></path>
+            <path d="M12 13 C 12 10, 9 9, 5 5"></path>
+            <path d="M12 13 C 12 10, 15 9, 19 5"></path>
+            <polyline points="5 9 5 5 9 5"></polyline>
+            <polyline points="19 9 19 5 15 5"></polyline>
+          </svg>
+        </button>
+      )}
       {onShowUsage && (
         <button
           onClick={handleShowUsage}
-          title="Usage Details"
+          title="Details"
           className="message-action-button"
           onMouseEnter={(e) => {
             e.currentTarget.style.backgroundColor = "var(--bg-tertiary)";

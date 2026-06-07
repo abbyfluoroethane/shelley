@@ -9,6 +9,38 @@ import (
 	"context"
 )
 
+const copyMessagesForFork = `-- name: CopyMessagesForFork :exec
+INSERT INTO messages (message_id, conversation_id, sequence_id, generation, type, llm_data, user_data, usage_data, display_data, excluded_from_context, created_at)
+SELECT lower(hex(randomblob(16))), ?1, m.sequence_id, 1, m.type, m.llm_data, m.user_data, m.usage_data, m.display_data, m.excluded_from_context, m.created_at
+FROM messages m
+WHERE m.conversation_id = ?2
+  AND m.sequence_id <= ?3
+  AND m.generation = ?4
+ORDER BY m.sequence_id ASC
+`
+
+type CopyMessagesForForkParams struct {
+	DestConversationID   string `json:"dest_conversation_id"`
+	SourceConversationID string `json:"source_conversation_id"`
+	CutoffSequenceID     int64  `json:"cutoff_sequence_id"`
+	SourceGeneration     int64  `json:"source_generation"`
+}
+
+// Copies the messages of a source conversation's current generation, up to and
+// including a cutoff sequence_id, into a destination conversation. The copies
+// are renumbered to generation 1 (the destination starts a fresh generation
+// history), get new message_ids, and preserve content, ordering, and original
+// timestamps. Used to fork a conversation.
+func (q *Queries) CopyMessagesForFork(ctx context.Context, arg CopyMessagesForForkParams) error {
+	_, err := q.db.ExecContext(ctx, copyMessagesForFork,
+		arg.DestConversationID,
+		arg.SourceConversationID,
+		arg.CutoffSequenceID,
+		arg.SourceGeneration,
+	)
+	return err
+}
+
 const countConsecutiveMessagesByType = `-- name: CountConsecutiveMessagesByType :one
 SELECT COUNT(*) FROM messages m
 WHERE m.conversation_id = ?1

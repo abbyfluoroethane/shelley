@@ -33,6 +33,7 @@ import BrowserProfileTool from "./BrowserProfileTool";
 import WebSearchTool from "./WebSearchTool";
 import ThinkingContent from "./ThinkingContent";
 import UsageDetailModal from "./UsageDetailModal";
+import MessageInfoModal from "./MessageInfoModal";
 import MessageActionBar from "./MessageActionBar";
 import EditableFileModal from "./EditableFileModal";
 import { type MarkdownMode } from "../services/settings";
@@ -101,6 +102,9 @@ interface MessageProps {
   onCommentTextChange?: (text: string) => void;
   onCancelQueued?: () => void;
   toolProgress?: Record<string, ToolProgress>;
+  // onFork forks the conversation, copying messages up to and including this
+  // one into a new conversation and navigating to it.
+  onFork?: (messageId: string) => void;
 }
 
 // Copy icon for the commit hash copy button
@@ -328,6 +332,7 @@ const Message = React.memo(function Message({
   onCommentTextChange,
   onCancelQueued,
   toolProgress,
+  onFork,
 }: MessageProps) {
   const { markdownMode } = useMarkdown();
 
@@ -353,6 +358,7 @@ const Message = React.memo(function Message({
   const [showActionBar, setShowActionBar] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [showUsageModal, setShowUsageModal] = useState(false);
+  const [showInfoModal, setShowInfoModal] = useState(false);
   const messageRef = useRef<HTMLDivElement | null>(null);
 
   // Show action bar on hover or when explicitly tapped
@@ -491,9 +497,23 @@ const Message = React.memo(function Message({
     setShowActionBar(false);
   };
 
-  // Handle usage detail action
+  // Handle the info action. Agent messages with token usage open the detailed
+  // usage modal; other messages (e.g. user messages) open a lightweight info
+  // modal so the action is available symmetrically.
   const handleShowUsage = () => {
-    setShowUsageModal(true);
+    if (usage) {
+      setShowUsageModal(true);
+    } else {
+      setShowInfoModal(true);
+    }
+    setShowActionBar(false);
+  };
+
+  // Handle fork action: fork the conversation up to and including this message.
+  const handleFork = () => {
+    if (onFork) {
+      onFork(message.message_id);
+    }
     setShowActionBar(false);
   };
 
@@ -557,7 +577,12 @@ const Message = React.memo(function Message({
   // Determine which actions to show in action bar
   const messageText = getMessageText();
   const hasCopyAction = !!messageText;
-  const hasUsageAction = message.type === "agent" && !!usage;
+  // Show the info action on agent messages (detailed usage) and on user
+  // messages (lightweight metadata) for symmetry.
+  const hasUsageAction = (message.type === "agent" && !!usage) || message.type === "user";
+  // Fork is offered on real (persisted) user/agent messages.
+  const hasForkAction =
+    !!onFork && !!message.message_id && (message.type === "user" || message.type === "agent");
   const isCommentable = !isUser && !isError && !isTool;
 
   // Build a map of tool use IDs to their inputs for linking tool_result back to tool_use
@@ -1243,10 +1268,11 @@ const Message = React.memo(function Message({
           role="alert"
           aria-label="Error message"
         >
-          {actionBarVisible && (hasCopyAction || hasUsageAction) && (
+          {actionBarVisible && (hasCopyAction || hasUsageAction || hasForkAction) && (
             <MessageActionBar
               onCopy={hasCopyAction ? handleCopy : undefined}
               onShowUsage={hasUsageAction ? handleShowUsage : undefined}
+              onFork={hasForkAction ? handleFork : undefined}
             />
           )}
           <div className="message-content" data-testid="message-content">
@@ -1260,6 +1286,9 @@ const Message = React.memo(function Message({
             durationMs={durationMs}
             onClose={() => setShowUsageModal(false)}
           />
+        )}
+        {showInfoModal && (
+          <MessageInfoModal message={message} onClose={() => setShowInfoModal(false)} />
         )}
       </>
     );
@@ -1321,10 +1350,11 @@ const Message = React.memo(function Message({
           data-testid="message"
           role="article"
         >
-          {actionBarVisible && (hasCopyAction || hasUsageAction) && (
+          {actionBarVisible && (hasCopyAction || hasUsageAction || hasForkAction) && (
             <MessageActionBar
               onCopy={hasCopyAction ? handleCopy : undefined}
               onShowUsage={hasUsageAction ? handleShowUsage : undefined}
+              onFork={hasForkAction ? handleFork : undefined}
             />
           )}
           <div className="message-content" data-testid="message-content">
@@ -1339,6 +1369,9 @@ const Message = React.memo(function Message({
             durationMs={durationMs}
             onClose={() => setShowUsageModal(false)}
           />
+        )}
+        {showInfoModal && (
+          <MessageInfoModal message={message} onClose={() => setShowInfoModal(false)} />
         )}
       </>
     );
@@ -1398,10 +1431,11 @@ const Message = React.memo(function Message({
         data-commentable={isCommentable ? "true" : undefined}
         role="article"
       >
-        {actionBarVisible && (hasCopyAction || hasUsageAction) && (
+        {actionBarVisible && (hasCopyAction || hasUsageAction || hasForkAction) && (
           <MessageActionBar
             onCopy={hasCopyAction ? handleCopy : undefined}
             onShowUsage={hasUsageAction ? handleShowUsage : undefined}
+            onFork={hasForkAction ? handleFork : undefined}
           />
         )}
         {/* Message content */}
@@ -1447,6 +1481,9 @@ const Message = React.memo(function Message({
           durationMs={durationMs}
           onClose={() => setShowUsageModal(false)}
         />
+      )}
+      {showInfoModal && (
+        <MessageInfoModal message={message} onClose={() => setShowInfoModal(false)} />
       )}
       {renderDistillationEditor()}
     </>

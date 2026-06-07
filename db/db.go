@@ -1254,6 +1254,51 @@ func (db *DB) DeleteConversation(ctx context.Context, conversationID string) err
 	})
 }
 
+// ForkConversation creates a new top-level conversation that copies the source
+// conversation's current-generation messages up to and including
+// cutoffSequenceID. The copies are renumbered to generation 1 so the fork
+// starts a fresh generation history (compaction etc. begin anew). The new
+// conversation inherits the source's cwd, model, and options. Its slug starts
+// nil; the caller assigns one. Returns the new conversation.
+func (db *DB) ForkConversation(ctx context.Context, sourceConversationID string, cutoffSequenceID int64) (*generated.Conversation, error) {
+	conversationID, err := generateConversationID()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate conversation ID: %w", err)
+	}
+	var conversation generated.Conversation
+	err = db.pool.Tx(ctx, func(ctx context.Context, tx *Tx) error {
+		q := generated.New(tx.Conn())
+		source, err := q.GetConversation(ctx, sourceConversationID)
+		if err != nil {
+			return fmt.Errorf("failed to load source conversation: %w", err)
+		}
+		conversation, err = q.CreateConversation(ctx, generated.CreateConversationParams{
+			ConversationID:      conversationID,
+			Slug:                nil,
+			UserInitiated:       true,
+			Cwd:                 source.Cwd,
+			Model:               source.Model,
+			ConversationOptions: source.ConversationOptions,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create forked conversation: %w", err)
+		}
+		// Copy only the source's active (current) generation, renumbered to
+		// generation 1 in the fork. The new conversation keeps CreateConversation's
+		// default current_generation of 1.
+		if err := q.CopyMessagesForFork(ctx, generated.CopyMessagesForForkParams{
+			DestConversationID:   conversationID,
+			SourceConversationID: sourceConversationID,
+			CutoffSequenceID:     cutoffSequenceID,
+			SourceGeneration:     source.CurrentGeneration,
+		}); err != nil {
+			return fmt.Errorf("failed to copy messages: %w", err)
+		}
+		return nil
+	})
+	return &conversation, err
+}
+
 // CreateSubagentConversation creates a new subagent conversation with a parent
 func (db *DB) CreateSubagentConversation(ctx context.Context, slug, parentID string, cwd *string) (*generated.Conversation, error) {
 	conversationID, err := generateConversationID()

@@ -984,6 +984,9 @@ func (s *Server) conversationMux() *http.ServeMux {
 	mux.HandleFunc("POST /{id}/new-generation", func(w http.ResponseWriter, r *http.Request) {
 		s.handleStartNewGeneration(w, r, r.PathValue("id"))
 	})
+	mux.HandleFunc("POST /{id}/fork", func(w http.ResponseWriter, r *http.Request) {
+		s.handleForkConversation(w, r, r.PathValue("id"))
+	})
 	return mux
 }
 
@@ -2881,6 +2884,119 @@ func (s *Server) handleRegisterConversationHook(w http.ResponseWriter, r *http.R
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "registered"})
+}
+
+// ForkRequest is the body for POST /conversation/<id>/fork. The fork copies all
+// messages up to and including the message identified by MessageID (preferred)
+// or SequenceID into a new conversation.
+type ForkRequest struct {
+	MessageID  string `json:"message_id,omitempty"`
+	SequenceID int64  `json:"sequence_id,omitempty"`
+}
+
+// handleForkConversation handles POST /conversation/<id>/fork. It creates a new
+// top-level conversation containing copies of the source conversation's
+// messages up to and including a cutoff point, then returns the new
+// conversation so the client can navigate to it.
+func (s *Server) handleForkConversation(w http.ResponseWriter, r *http.Request, conversationID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx := r.Context()
+
+	var req ForkRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Resolve the cutoff sequence_id. A message_id takes precedence; otherwise
+	// use the supplied sequence_id, or fall back to the conversation's latest
+	// message (fork the whole thing).
+	cutoff := req.SequenceID
+	if req.MessageID != "" {
+		msg, err := s.db.GetMessageByID(ctx, req.MessageID)
+		if err != nil {
+			http.Error(w, "Message not found", http.StatusNotFound)
+			return
+		}
+		if msg.ConversationID != conversationID {
+			http.Error(w, "Message does not belong to this conversation", http.StatusBadRequest)
+			return
+		}
+		cutoff = msg.SequenceID
+	} else {
+		// No explicit message_id: clamp the cutoff to the conversation's latest
+		// sequence_id. A non-positive (or out-of-range) value forks the whole
+		// conversation. This also rejects forks of empty conversations.
+		latest, err := s.db.GetLatestMessage(ctx, conversationID)
+		if err != nil {
+			http.Error(w, "Conversation has no messages to fork", http.StatusBadRequest)
+			return
+		}
+		if cutoff <= 0 || cutoff > latest.SequenceID {
+			cutoff = latest.SequenceID
+		}
+	}
+
+	forked, err := s.db.ForkConversation(ctx, conversationID, cutoff)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "Conversation not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		s.logger.Error("Failed to fork conversation", "conversationID", conversationID, "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Give the fork a distinct slug derived from the source's, so it shows up
+	// in the drawer with a meaningful name. We do this synchronously (no LLM)
+	// using the source slug as a base; ForkConversation left the slug nil.
+	if source, serr := s.db.GetConversationByID(ctx, conversationID); serr == nil && source != nil {
+		base := "fork"
+		if source.Slug != nil && *source.Slug != "" {
+			base = *source.Slug + "-fork"
+		}
+		if sanitized := slug.Sanitize(base); sanitized != "" {
+			candidate := sanitized
+			for attempt := 0; attempt < 100; attempt++ {
+				if updated, uerr := s.db.UpdateConversationSlug(ctx, forked.ConversationID, candidate); uerr == nil {
+					forked = updated
+					break
+				} else if isUniqueConstraintErr(uerr) {
+					candidate = fmt.Sprintf("%s-%d", sanitized, attempt+1)
+					continue
+				} else {
+					s.logger.Warn("Failed to assign slug to forked conversation", "conversationID", forked.ConversationID, "error", uerr)
+					break
+				}
+			}
+		}
+	}
+
+	// Notify conversation list subscribers about the new conversation.
+	go s.publishConversationListUpdate(ConversationListUpdate{Type: "update", Conversation: forked})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(forked)
+}
+
+// isUniqueConstraintErr reports whether err is a SQLite UNIQUE constraint
+// violation (e.g. a slug collision).
+func isUniqueConstraintErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique constraint failed") ||
+		strings.Contains(msg, "unique constraint") ||
+		strings.Contains(msg, "duplicate")
 }
 
 // handleStartNewGeneration handles POST /conversation/<id>/new-generation.

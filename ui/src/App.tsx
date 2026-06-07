@@ -782,6 +782,7 @@ function App() {
             reconnectNonce={reconnectNonce}
             onOpenDrawer={() => setDrawerOpen(true)}
             onNewConversation={startNewConversation}
+            onSelectConversation={selectConversation}
             onArchiveConversation={async (conversationId: string) => {
               await api.archiveConversation(conversationId);
               handleConversationArchived(conversationId);

@@ -36,6 +36,20 @@ WHERE conversation_id = ?
 ORDER BY sequence_id ASC
 LIMIT ? OFFSET ?;
 
+-- name: CopyMessagesForFork :exec
+-- Copies the messages of a source conversation's current generation, up to and
+-- including a cutoff sequence_id, into a destination conversation. The copies
+-- are renumbered to generation 1 (the destination starts a fresh generation
+-- history), get new message_ids, and preserve content, ordering, and original
+-- timestamps. Used to fork a conversation.
+INSERT INTO messages (message_id, conversation_id, sequence_id, generation, type, llm_data, user_data, usage_data, display_data, excluded_from_context, created_at)
+SELECT lower(hex(randomblob(16))), sqlc.arg('dest_conversation_id'), m.sequence_id, 1, m.type, m.llm_data, m.user_data, m.usage_data, m.display_data, m.excluded_from_context, m.created_at
+FROM messages m
+WHERE m.conversation_id = sqlc.arg('source_conversation_id')
+  AND m.sequence_id <= sqlc.arg('cutoff_sequence_id')
+  AND m.generation = sqlc.arg('source_generation')
+ORDER BY m.sequence_id ASC;
+
 -- name: ListMessagesByType :many
 SELECT * FROM messages
 WHERE conversation_id = ? AND type = ?
